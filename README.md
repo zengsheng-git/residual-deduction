@@ -44,6 +44,9 @@ pnpm tauri dev      # 桌面应用(前端 + Rust 后端)
 
 > **首次克隆需准备 `libs/` 运行时资源**(模型/引擎/ffmpeg, 不随仓库分发), 见 [libs/README.md](libs/README.md)。
 
+> **网络备注**: 若 `github.com:443` 直连超时, 可用可达的 GitHub IP 固定解析后推送:
+> `git config http.curloptResolve "github.com:443:140.82.112.3"`(IP 失效时换 `140.82.114.3` 等可达节点, 或走代理)。
+
 ### 测试
 
 ```bash
