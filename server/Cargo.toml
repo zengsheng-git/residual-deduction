@@ -1,0 +1,48 @@
+[package]
+name = "residual-deduction"
+version = "0.1.0"
+description = "残局解说视频生产线"
+authors = ["residual-deduction"]
+edition = "2024"
+
+[lib]
+name = "residual_deduction_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.2.0", features = [] }
+
+[dependencies]
+tauri = { version = "2.5.1", features = ["protocol-asset"] }
+tauri-plugin-opener = "2.2.6"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+image = "0.25"
+imageproc = "0.25"
+ab_glyph = "0.2"
+ndarray = "0.16"
+base64 = "0.22"
+sha2 = "0.10"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "time", "local-time"] }
+tracing-appender = "0.2"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+ort = { version = "=2.0.0-rc.9", default-features = false, features = ["ndarray", "load-dynamic"] }
+# ort rc.9 与 ort-sys rc.10 的 API 字段类型不兼容, 显式钉住版本
+ort-sys = "=2.0.0-rc.9"
+
+[target.'cfg(not(target_os = "windows"))'.dependencies]
+ort = { version = "=2.0.0-rc.9", default-features = false, features = ["ndarray", "load-dynamic"] }
+
+[profile.dev]
+incremental = true
+
+[profile.release]
+codegen-units = 1
+lto = true
+panic = "abort"
+opt-level = "s"
+strip = true
