@@ -55,6 +55,8 @@ pub struct Script {
     pub outro_comment: String,
     pub outro_info: Vec<String>,
     pub scenes: Vec<MoveScene>,
+    pub polished: bool,     // 解说词经过 AI 润色(部分或全部)
+    pub polish_model: String, // 润色使用的模型, 未润色为空
 }
 
 fn verdict_text(score: isize, camp: &Camp) -> String {
@@ -267,7 +269,7 @@ pub fn build(
         format!("红方阵容: {}", red_material),
         format!("黑方阵容: {}", black_material),
         format!("先行方: {}方", narrator::camp_name(&start_camp)),
-        format!("引擎判断: {}", verdict),
+        format!("局面判断: {}", verdict),
     ];
 
     // 总结: 挑选关键着法(绝杀/吃车马炮/分支节点/将军)
@@ -308,6 +310,8 @@ pub fn build(
             outro_comment,
             outro_info,
             scenes,
+            polished: false,
+            polish_model: String::new(),
         },
     })
 }

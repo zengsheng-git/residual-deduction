@@ -22,6 +22,8 @@ pub struct Settings {
     pub voice_enabled: bool,    // 默认生成语音解说
     pub branches_enabled: bool, // 默认包含分支推演
     pub autoplay_sound: bool,
+    #[serde(default)]
+    pub polish: crate::polish::PolishConfig, // AI 解说润色(可选)
 }
 
 impl Default for Settings {
@@ -35,6 +37,7 @@ impl Default for Settings {
             voice_enabled: true,
             branches_enabled: true,
             autoplay_sound: true,
+            polish: Default::default(),
         }
     }
 }

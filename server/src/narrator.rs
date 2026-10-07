@@ -118,7 +118,7 @@ pub fn move_comment(
     }
     if let Some(n) = mate_moves(node_score) {
         if n > 1 {
-            parts.push(format!("引擎判断再走{}步可以绝杀", n));
+            parts.push(format!("再走{}步就能绝杀", n));
         }
     }
     for (alt_chinese, note) in branches.iter().take(2) {
@@ -166,7 +166,7 @@ pub fn intro_comment(camp: &Camp, red_material: &str, black_material: &str, verd
         }
     };
     format!(
-        "欢迎来到残局推演。看当前局面, 红方{}, 黑方{}。{}方先行, 引擎判断{}。这盘棋为什么能赢? 我们一步一步推演。",
+        "欢迎来到残局推演。看当前局面, 红方{}, 黑方{}。{}方先行, {}。这盘棋为什么能赢? 我们一步一步推演。",
         describe(red_material),
         describe(black_material),
         camp_name(camp),

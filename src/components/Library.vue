@@ -102,7 +102,10 @@ function remove(v: VideoMeta) {
           <img class="thumb" :src="convertFileSrc(v.thumb_path)" alt="" @click="play(v)" />
         </template>
         <div class="meta">
-          <n-tag type="info" size="small">{{ v.verdict }}</n-tag>
+          <div class="tag-row">
+            <n-tag type="info" size="small">{{ v.verdict }}</n-tag>
+            <n-tag v-if="v.polished" type="success" size="small">AI 润色</n-tag>
+          </div>
           <div class="meta-lines">
             <span>{{ v.move_count }} 步 · {{ fmtDuration(v.duration_secs) }} · {{ fmtSize(v.size_bytes) }}</span>
             <span class="date">{{ fmtDate(v.created_ms) }}</span>

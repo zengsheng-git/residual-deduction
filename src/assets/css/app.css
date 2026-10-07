@@ -284,6 +284,13 @@ body {
     gap: 8px;
 }
 
+.tag-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
 .meta-lines {
     display: flex;
     flex-direction: column;

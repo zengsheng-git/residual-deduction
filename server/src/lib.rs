@@ -9,6 +9,7 @@ mod generator;
 mod library;
 mod logger;
 mod narrator;
+mod polish;
 mod recognize;
 mod render;
 mod storyboard;
@@ -101,6 +102,7 @@ pub fn run() {
             open_videos_folder,
             get_settings,
             save_settings,
+            test_polish_connection,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -131,6 +133,7 @@ fn generate_video(app: AppHandle, params: GenParams) -> Result<(), String> {
     let ffmpeg = state().ffmpeg.clone();
     let base_dir = state().base_dir.clone();
     let job_flag = state().job.clone();
+    let polish_cfg = state().settings.read().unwrap().polish.clone();
 
     // 参数合并当前设置(未显式提供时)
     let params = {
@@ -148,7 +151,7 @@ fn generate_video(app: AppHandle, params: GenParams) -> Result<(), String> {
     std::thread::spawn(move || {
         // 捕获生成线程的 panic, 保证 done/error 事件必定发出, 前端不会卡在"生成中"
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            generator::generate(engine, &ffmpeg, &base_dir, &params, &stop, &|p: GenProgress| {
+            generator::generate(engine, &ffmpeg, &base_dir, &params, &stop, &polish_cfg, &|p: GenProgress| {
                 let _ = app.emit("gen://progress", &p);
             })
         }));
@@ -215,4 +218,10 @@ fn save_settings(new_settings: config::Settings) -> Result<config::Settings, Str
     new_settings.save(&state().settings_dir)?;
     *state().settings.write().unwrap() = new_settings.clone();
     Ok(new_settings)
+}
+
+// 设置页"测试连接": 用示例解说词验证润色接口
+#[tauri::command]
+fn test_polish_connection(cfg: polish::PolishConfig) -> Result<String, String> {
+    polish::test_connection(&cfg)
 }

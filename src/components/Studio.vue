@@ -29,6 +29,7 @@ const branchesEnabled = ref(true);
 
 const stages: Record<string, string> = {
     analyse: "引擎推演",
+    polish: "润色解说",
     tts: "配音",
     render: "渲染",
     compose: "合成",
@@ -254,7 +255,7 @@ function fmtDuration(secs: number): string {
         <video class="video-player" :src="convertFileSrc(store.lastVideo.video_path)" controls :poster="convertFileSrc(store.lastVideo.thumb_path)" />
         <div class="video-meta">
           <b>{{ store.lastVideo.title }}</b>
-          <span>{{ store.lastVideo.verdict }} · {{ fmtDuration(store.lastVideo.duration_secs) }} · {{ fmtSize(store.lastVideo.size_bytes) }}</span>
+          <span>{{ store.lastVideo.verdict }}{{ store.lastVideo.polished ? " · AI 润色" : "" }} · {{ fmtDuration(store.lastVideo.duration_secs) }} · {{ fmtSize(store.lastVideo.size_bytes) }}</span>
           <span class="action-hint">也可在"视频库"标签页查看全部成片</span>
         </div>
       </n-card>

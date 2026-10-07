@@ -26,6 +26,7 @@ export interface VideoMeta {
     move_count: number;
     video_path: string;
     thumb_path: string;
+    polished: boolean; // 解说词经过 AI 润色
 }
 
 export interface GenProgress {
@@ -47,6 +48,13 @@ export interface GenParams {
     branches_enabled: boolean; // 是否包含分支推演
 }
 
+export interface PolishSettings {
+    enabled: boolean;
+    base_url: string; // OpenAI 兼容接口地址
+    api_key: string;
+    model: string;
+}
+
 export interface AppSettings {
     voice: string;
     rate: number;
@@ -56,6 +64,7 @@ export interface AppSettings {
     voice_enabled: boolean;
     branches_enabled: boolean;
     autoplay_sound: boolean;
+    polish: PolishSettings;
 }
 
 export const VOICES: { value: string; label: string }[] = [
@@ -99,6 +108,11 @@ export async function getSettings(): Promise<AppSettings> {
 
 export async function saveSettings(settings: AppSettings): Promise<AppSettings> {
     return invoke("save_settings", { newSettings: settings });
+}
+
+// 测试 AI 润色接口连通性, 返回模型对示例解说词的改写结果
+export async function testPolishConnection(polish: PolishSettings): Promise<string> {
+    return invoke("test_polish_connection", { cfg: polish });
 }
 
 export function listenProgress(cb: (p: GenProgress) => void) {

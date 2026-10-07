@@ -18,6 +18,7 @@ use crate::engine::Engine;
 use crate::engine::EngineConfig;
 use crate::library;
 use crate::library::VideoMeta;
+use crate::polish;
 use crate::render::BranchDemo;
 use crate::render::FrameScene;
 use crate::render::Renderer;
@@ -123,7 +124,7 @@ fn build_frame_scenes(script: &storyboard::Script, start_board: &Board) -> (Vec<
         camp: script.camp,
         title: script.title.clone(),
         verdict: script.verdict.clone(),
-        score_line: "引擎开局推演".to_string(),
+        score_line: "开局分析".to_string(),
         winrate: None,
         log: vec![],
         current_idx: None,
@@ -251,6 +252,7 @@ pub fn generate(
     base_dir: &Path,
     params: &GenParams,
     stop: &AtomicBool,
+    polish_cfg: &polish::PolishConfig,
     progress: &dyn Fn(GenProgress),
 ) -> Result<VideoMeta, String> {
     let board = chess::board_from_positions(&params.pieces).map_err(|e| format!("局面数据无效: {e}"))?;
@@ -264,7 +266,7 @@ pub fn generate(
 
     // 1. 引擎推演剧本
     progress(GenProgress { stage: "analyse".into(), current: 0, total: 0, message: "引擎推演主线与分支...".into() });
-    let script = {
+    let mut script = {
         let mut eng = engine.lock().map_err(|_| "引擎被占用".to_string())?;
         eng.set_threads(4);
         let cfg = EngineConfig {
@@ -278,11 +280,41 @@ pub fn generate(
         out.script
     };
 
-    // 2. 场景帧数据
+    // 2. AI 润色解说词(可选): 分段请求, 失败的段保留模板原文
+    let mut polished = false;
+    if polish_cfg.enabled {
+        if !polish_cfg.ready() {
+            tracing::warn!("润色已启用但配置不完整(接口地址/API Key/模型名需全部填写), 本次使用模板解说");
+            progress(GenProgress { stage: "polish".into(), current: 0, total: 0, message: "润色已启用但接口配置不完整, 本次使用模板解说".into() });
+        } else {
+            progress(GenProgress { stage: "polish".into(), current: 0, total: 0, message: "AI 润色解说词...".into() });
+            match polish::polish(&mut script, polish_cfg, stop) {
+                Ok(0) => {
+                    script.polished = true;
+                    script.polish_model = polish_cfg.model.trim().to_string();
+                    polished = true;
+                    progress(GenProgress { stage: "polish".into(), current: 0, total: 0, message: "解说词润色完成".into() });
+                }
+                Ok(n) => {
+                    script.polished = true;
+                    script.polish_model = polish_cfg.model.trim().to_string();
+                    polished = true;
+                    tracing::warn!("AI 润色有 {n} 段失败, 已回退模板原文");
+                    progress(GenProgress { stage: "polish".into(), current: 0, total: 0, message: format!("AI 润色完成, {n} 段失败已回退模板(详见日志)") });
+                }
+                Err(e) => {
+                    tracing::warn!("解说词润色中断: {e}");
+                    progress(GenProgress { stage: "polish".into(), current: 0, total: 0, message: format!("AI 润色中断: {e}") });
+                }
+            }
+        }
+    }
+
+    // 3. 场景帧数据
     let (frame_scenes, final_board) = build_frame_scenes(&script, &board);
     let total_scenes = frame_scenes.len() as u32;
 
-    // 3. 输出目录
+    // 4. 输出目录
     let id = make_id();
     let work_dir = library::videos_dir(base_dir).join(&id);
     std::fs::create_dir_all(&work_dir).map_err(|e| format!("创建输出目录失败: {e}"))?;
@@ -361,7 +393,7 @@ pub fn generate(
         segments.push(seg_path);
     }
 
-    // 4. 拼接 + 封面
+    // 5. 拼接 + 封面
     progress(GenProgress { stage: "compose".into(), current: total_scenes, total: total_scenes, message: "拼接片段并生成封面...".into() });
     let video_path = work_dir.join("video.mp4");
     video::concat_segments(ffmpeg, &segments, &video_path, &work_dir)?;
@@ -370,7 +402,7 @@ pub fn generate(
     video::extract_thumbnail(ffmpeg, &video_path, &thumb_path, thumb_at)?;
     let duration = video::video_duration(ffmpeg, &video_path).unwrap_or(total_duration);
 
-    // 5. 写元数据与剧本
+    // 6. 写元数据与剧本
     let size = std::fs::metadata(&video_path).map(|m| m.len()).unwrap_or(0);
     let meta = VideoMeta {
         id: id.clone(),
@@ -382,6 +414,7 @@ pub fn generate(
         move_count: script.scenes.len(),
         video_path: video_path.to_string_lossy().into_owned(),
         thumb_path: thumb_path.to_string_lossy().into_owned(),
+        polished,
     };
     library::save_meta(base_dir, &meta)?;
     let script_json = serde_json::to_string_pretty(&script).map_err(|e| format!("剧本序列化失败: {e}"))?;
@@ -442,6 +475,7 @@ mod tests {
             &base,
             &params,
             &AtomicBool::new(false),
+            &crate::polish::PolishConfig::default(),
             &|p| println!("[{:?} {}/{}] {}", p.stage, p.current, p.total, p.message),
         )
         .expect("生成失败");
@@ -470,6 +504,8 @@ mod branch_demo_tests {
             intro_info: vec![],
             outro_comment: "结尾".into(),
             outro_info: vec![],
+            polished: false,
+            polish_model: String::new(),
             scenes: vec![storyboard::MoveScene {
                 ply: 2,
                 camp: 'b',

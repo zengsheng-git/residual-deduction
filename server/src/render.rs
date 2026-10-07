@@ -380,7 +380,7 @@ impl Renderer {
             if !scene.branches.is_empty() {
                 let card_top = 830;
                 draw_filled_rect_mut(canvas, Rect::at(panel_x - 14, card_top).of_size(860, 150), Rgba([255, 255, 255, 14]));
-                self.draw_text(canvas, &self.text_font, 26.0, GOLD, panel_x, card_top + 10, "其他选择(引擎分支分析)");
+                self.draw_text(canvas, &self.text_font, 26.0, GOLD, panel_x, card_top + 10, "换个下法试试");
                 let mut by = card_top + 56;
                 for line in scene.branches.iter().take(2) {
                     self.draw_text(canvas, &self.text_font, 28.0, PANEL_TEXT, panel_x, by, line);

@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { useMessage } from "naive-ui";
-import { NButton, NCard, NForm, NFormItem, NInputNumber, NSelect, NSlider, NSwitch } from "naive-ui";
+import { NButton, NCard, NForm, NFormItem, NInput, NInputNumber, NSelect, NSlider, NSwitch } from "naive-ui";
 import { onMounted, ref } from "vue";
 
-import { getSettings, saveSettings, VOICES, type AppSettings } from "../api";
+import { getSettings, saveSettings, testPolishConnection, VOICES, type AppSettings } from "../api";
 const message = useMessage();
 const settings = ref<AppSettings | null>(null);
+const testing = ref(false);
 
 onMounted(async () => {
     settings.value = await getSettings();
@@ -18,6 +19,19 @@ async function save() {
         message.success("设置已保存");
     } catch (e) {
         message.error(String(e));
+    }
+}
+
+async function testPolish() {
+    if (!settings.value) return;
+    testing.value = true;
+    try {
+        const result = await testPolishConnection(settings.value.polish);
+        message.success(`润色接口正常, 模型返回: ${result}`);
+    } catch (e) {
+        message.error(String(e));
+    } finally {
+        testing.value = false;
     }
 }
 </script>
@@ -55,6 +69,32 @@ async function save() {
         </n-form-item>
         <n-form-item label="完成后提示音">
           <n-switch v-model:value="settings.autoplay_sound" />
+        </n-form-item>
+      </n-form>
+      <template #action>
+        <NButton type="primary" @click="save">保存设置</NButton>
+      </template>
+    </n-card>
+
+    <n-card title="AI 解说润色 (可选)" size="small" class="settings-card">
+      <n-form v-if="settings" label-placement="left" label-width="120">
+        <n-form-item label="启用润色">
+          <n-switch v-model:value="settings.polish.enabled">
+            <template #checked>模板生成后交给大模型改写</template>
+            <template #unchecked>仅使用模板解说</template>
+          </n-switch>
+        </n-form-item>
+        <n-form-item label="接口地址">
+          <n-input v-model:value="settings.polish.base_url" placeholder="OpenAI 兼容接口, 如 https://api.deepseek.com 或 https://api.openai.com/v1" />
+        </n-form-item>
+        <n-form-item label="API Key">
+          <n-input v-model:value="settings.polish.api_key" type="password" show-password-on="click" placeholder="sk-..." />
+        </n-form-item>
+        <n-form-item label="模型名称">
+          <n-input v-model:value="settings.polish.model" placeholder="如 deepseek-chat / gpt-4o-mini" />
+        </n-form-item>
+        <n-form-item label="测试">
+          <n-button size="small" :loading="testing" @click="testPolish">发送示例解说词, 验证连通性</n-button>
         </n-form-item>
       </n-form>
       <template #action>
