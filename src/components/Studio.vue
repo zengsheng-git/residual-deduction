@@ -147,90 +147,92 @@ function fmtDuration(secs: number): string {
 <template>
   <div class="studio">
     <div class="left-col">
-      <n-card title="1 · 上传残局截图" size="small">
-        <n-upload
-          accept="image/*"
-          v-model:file-list="uploadList"
-          :max="1"
-          :default-upload="true"
-          :show-file-list="false"
-          @change="handleUpload"
-        >
-          <n-upload-dragger>
-            <div class="upload-hint">
-              <div class="upload-icon">♟</div>
-              <div>点击或拖入截图 (对局平台 / 棋谱网站 / App 残局页)</div>
-              <div class="upload-sub">{{ store.recognition ? "已识别 — 传错了? 重新上传将自动替换" : "系统将自动识别棋盘与棋子" }}</div>
-            </div>
-          </n-upload-dragger>
-        </n-upload>
-      </n-card>
+      <div class="left-scroll">
+        <n-card title="1 · 上传残局截图" size="small">
+          <n-upload
+            accept="image/*"
+            v-model:file-list="uploadList"
+            :max="1"
+            :default-upload="true"
+            :show-file-list="false"
+            @change="handleUpload"
+          >
+            <n-upload-dragger>
+              <div class="upload-hint">
+                <div class="upload-icon">♟</div>
+                <div>点击或拖入截图 (对局平台 / 棋谱网站 / App 残局页)</div>
+                <div class="upload-sub">{{ store.recognition ? "已识别 — 传错了? 重新上传将自动替换" : "系统将自动识别棋盘与棋子" }}</div>
+              </div>
+            </n-upload-dragger>
+          </n-upload>
+        </n-card>
 
-      <n-card title="2 · 确认局面并选择生成项" size="small" class="mt">
-        <template v-if="store.recognition">
-          <div class="preview-row">
-            <img v-if="store.recognition.preview_base64" class="board-preview" :src="`data:image/png;base64,${store.recognition.preview_base64}`" alt="识别预览" />
-            <div class="preview-meta">
-              <n-space vertical>
-                <n-tag :type="store.recognition.legal ? 'success' : 'warning'">
-                  {{ store.recognition.legal ? "布局合法" : "布局待核对" }}
-                </n-tag>
-                <span>棋子: {{ store.recognition.pieces_count }} 枚</span>
-                <n-alert v-for="issue in store.recognition.issues" :key="issue" type="warning" :show-icon="false">
-                  {{ issue }}
-                </n-alert>
-                <div class="side-pick">
-                  <div class="side-label">谁先走?(残局截图无法自动判断)</div>
-                  <n-radio-group v-model:value="store.side">
-                    <n-radio-button value="w">红方先行</n-radio-button>
-                    <n-radio-button value="b">黑方先行</n-radio-button>
-                  </n-radio-group>
-                </div>
-                <div class="side-pick">
-                  <div class="side-label">视频里要包含什么?</div>
-                  <div class="switch-row">
-                    <div class="switch-item">
-                      <n-switch v-model:value="voiceEnabled" size="small" />
-                      <span>语音解说</span>
-                    </div>
-                    <div class="switch-item">
-                      <n-switch v-model:value="branchesEnabled" size="small" />
-                      <span>分支推演</span>
+        <n-card title="2 · 确认局面并选择生成项" size="small" class="mt">
+          <template v-if="store.recognition">
+            <div class="preview-row">
+              <img v-if="store.recognition.preview_base64" class="board-preview" :src="`data:image/png;base64,${store.recognition.preview_base64}`" alt="识别预览" />
+              <div class="preview-meta">
+                <n-space vertical>
+                  <n-tag :type="store.recognition.legal ? 'success' : 'warning'">
+                    {{ store.recognition.legal ? "布局合法" : "布局待核对" }}
+                  </n-tag>
+                  <span>棋子: {{ store.recognition.pieces_count }} 枚</span>
+                  <n-alert v-for="issue in store.recognition.issues" :key="issue" type="warning" :show-icon="false">
+                    {{ issue }}
+                  </n-alert>
+                  <div class="side-pick">
+                    <div class="side-label">谁先走?(残局截图无法自动判断)</div>
+                    <n-radio-group v-model:value="store.side">
+                      <n-radio-button value="w">红方先行</n-radio-button>
+                      <n-radio-button value="b">黑方先行</n-radio-button>
+                    </n-radio-group>
+                  </div>
+                  <div class="side-pick">
+                    <div class="side-label">视频里要包含什么?</div>
+                    <div class="switch-row">
+                      <div class="switch-item">
+                        <n-switch v-model:value="voiceEnabled" size="small" />
+                        <span>语音解说</span>
+                      </div>
+                      <div class="switch-item">
+                        <n-switch v-model:value="branchesEnabled" size="small" />
+                        <span>分支推演</span>
+                      </div>
                     </div>
                   </div>
-                </div>
-              </n-space>
+                </n-space>
+              </div>
             </div>
-          </div>
-        </template>
-        <template v-else>
-          <div class="placeholder">上传截图后自动识别, 在这里确认局面、选先行方和视频内容, 然后生成。</div>
-        </template>
-      </n-card>
+          </template>
+          <template v-else>
+            <div class="placeholder">上传截图后自动识别, 在这里确认局面、选先行方和视频内容, 然后生成。</div>
+          </template>
+        </n-card>
 
-      <n-card title="3 · 高级参数(有默认值, 一般不用动)" size="small" class="mt">
-        <n-form label-placement="left" label-width="96">
-          <n-form-item label="解说声音">
-            <n-select v-model:value="voice" :options="VOICES" :disabled="!voiceEnabled" />
-          </n-form-item>
-          <n-form-item label="语速">
-            <n-slider v-model:value="rate" :min="-30" :max="80" :step="5" :disabled="!voiceEnabled" :format-tooltip="(v: number) => `${v > 0 ? '+' : ''}${v}%`" />
-          </n-form-item>
-          <n-form-item label="搜索深度">
-            <n-input-number v-model:value="depth" :min="12" :max="40" />
-          </n-form-item>
-          <n-form-item label="每步时限">
-            <n-input-number v-model:value="movetime" :min="500" :max="10000" :step="500">
-              <template #suffix>ms</template>
-            </n-input-number>
-          </n-form-item>
-          <n-form-item label="分支节点">
-            <n-input-number v-model:value="branchMax" :min="0" :max="6" :disabled="!branchesEnabled" />
-          </n-form-item>
-        </n-form>
-      </n-card>
+        <n-card title="3 · 高级参数(有默认值, 一般不用动)" size="small" class="mt">
+          <n-form label-placement="left" label-width="96">
+            <n-form-item label="解说声音">
+              <n-select v-model:value="voice" :options="VOICES" :disabled="!voiceEnabled" />
+            </n-form-item>
+            <n-form-item label="语速">
+              <n-slider v-model:value="rate" :min="-30" :max="80" :step="5" :disabled="!voiceEnabled" :format-tooltip="(v: number) => `${v > 0 ? '+' : ''}${v}%`" />
+            </n-form-item>
+            <n-form-item label="搜索深度">
+              <n-input-number v-model:value="depth" :min="12" :max="40" />
+            </n-form-item>
+            <n-form-item label="每步时限">
+              <n-input-number v-model:value="movetime" :min="500" :max="10000" :step="500">
+                <template #suffix>ms</template>
+              </n-input-number>
+            </n-form-item>
+            <n-form-item label="分支节点">
+              <n-input-number v-model:value="branchMax" :min="0" :max="6" :disabled="!branchesEnabled" />
+            </n-form-item>
+          </n-form>
+        </n-card>
+      </div>
 
-      <!-- 吸底操作条: 窗口高度不足时也始终可见 -->
+      <!-- 底部操作条: 固定在左栏底部, 不随内容滚动 -->
       <div class="action-bar">
         <n-button
           type="primary"
