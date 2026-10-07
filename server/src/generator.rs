@@ -10,6 +10,7 @@ use std::time::UNIX_EPOCH;
 
 use serde::Serialize;
 
+use crate::attack;
 use crate::chess;
 use crate::chess::Board;
 use crate::chess::Camp;
@@ -17,6 +18,7 @@ use crate::engine::Engine;
 use crate::engine::EngineConfig;
 use crate::library;
 use crate::library::VideoMeta;
+use crate::render::BranchDemo;
 use crate::render::FrameScene;
 use crate::render::Renderer;
 use crate::render::CANVAS_H;
@@ -117,6 +119,7 @@ fn build_frame_scenes(script: &storyboard::Script, start_board: &Board) -> (Vec<
         board_before: chess::board_map(*start_board).into_iter().filter(|p| p.piece != ' ').collect(),
         board_after: chess::board_map(*start_board).into_iter().filter(|p| p.piece != ' ').collect(),
         move_iccs: None,
+        branch_demo: None,
         camp: script.camp,
         title: script.title.clone(),
         verdict: script.verdict.clone(),
@@ -150,6 +153,7 @@ fn build_frame_scenes(script: &storyboard::Script, start_board: &Board) -> (Vec<
             board_before: s.board_before.clone(),
             board_after: chess::board_map(after).into_iter().filter(|p| p.piece != ' ').collect(),
             move_iccs: Some(s.iccs.clone()),
+            branch_demo: None,
             camp: s.camp,
             title: script.title.clone(),
             verdict: script.verdict.clone(),
@@ -164,6 +168,37 @@ fn build_frame_scenes(script: &storyboard::Script, start_board: &Board) -> (Vec<
             anim_ratio: 0.35,
         });
         cur = after;
+
+        // 分支演示场景: 回到本步走子前, 假设改走备选着法, 并演示对方的反制
+        for b in &s.branches {
+            let after_alt = chess::board_move(before, &b.iccs);
+            let demo_final = b.reply.as_ref().map(|r| chess::board_move(after_alt, r)).unwrap_or(after_alt);
+            // 演示线最后一手若形成将军, 落定帧高亮被将的将帅
+            let last_mover_char = if b.reply.is_some() { if s.camp == 'w' { 'b' } else { 'w' } } else { s.camp };
+            let check_pos = if attack::gives_check(&demo_final, &Camp::from_char(last_mover_char)) {
+                find_king(&demo_final, if last_mover_char == 'w' { 'k' } else { 'K' })
+            } else {
+                None
+            };
+            scenes.push(FrameScene {
+                board_before: s.board_before.clone(),
+                board_after: chess::board_map(demo_final).into_iter().filter(|p| p.piece != ' ').collect(),
+                move_iccs: None,
+                branch_demo: Some(BranchDemo { alt_iccs: b.iccs.clone(), reply_iccs: b.reply.clone() }),
+                camp: s.camp,
+                title: script.title.clone(),
+                verdict: script.verdict.clone(),
+                score_line: format!("分支演示 · 假如{}方不走{} · {}", if s.camp == 'w' { "红" } else { "黑" }, s.chinese, b.note),
+                winrate: None,
+                log: log.clone(),
+                current_idx: Some(idx),
+                branches: vec![format!("改走{}   {}", b.chinese, b.note)],
+                info_lines: vec![],
+                subtitle: b.demo_comment.clone(),
+                check_pos,
+                anim_ratio: if b.reply.is_some() { 0.7 } else { 0.35 },
+            });
+        }
     }
 
     // 结尾
@@ -178,6 +213,7 @@ fn build_frame_scenes(script: &storyboard::Script, start_board: &Board) -> (Vec<
         board_before: chess::board_map(cur).into_iter().filter(|p| p.piece != ' ').collect(),
         board_after: chess::board_map(cur).into_iter().filter(|p| p.piece != ' ').collect(),
         move_iccs: None,
+        branch_demo: None,
         camp: script.camp,
         title: script.title.clone(),
         verdict: script.verdict.clone(),
@@ -261,7 +297,7 @@ pub fn generate(
             let _ = std::fs::remove_dir_all(&work_dir);
             return Err("已取消".to_string());
         }
-        let is_move = scene.move_iccs.is_some();
+        let is_move = scene.move_iccs.is_some() || scene.branch_demo.is_some();
         // TTS
         progress(GenProgress { stage: "tts".into(), current: i as u32, total: total_scenes, message: format!("配音 {}/{}: {}", i + 1, total_scenes, scene.subtitle.chars().take(18).collect::<String>()) });
         let mp3_path = work_dir.join(format!("scene_{i:02}.mp3"));
@@ -414,6 +450,92 @@ mod tests {
         println!("duration: {:.1}s size: {} bytes", meta.duration_secs, meta.size_bytes);
         assert!(std::path::Path::new(&meta.video_path).exists());
         assert!(meta.size_bytes > 100_000);
+    }
+}
+
+// 分支演示场景测试
+#[cfg(test)]
+mod branch_demo_tests {
+    use super::*;
+    use crate::chess::fen_to_board;
+
+    fn demo_script() -> (storyboard::Script, Board) {
+        let board = fen_to_board("3k5/9/9/9/9/9/9/9/4C4/4KR3 w");
+        let pieces = chess::board_map(board).into_iter().filter(|p| p.piece != ' ').collect();
+        let script = storyboard::Script {
+            title: "残局推演: 红方主动进攻".into(),
+            camp: 'w',
+            verdict: "红方优势明显".into(),
+            intro_comment: "开场".into(),
+            intro_info: vec![],
+            outro_comment: "结尾".into(),
+            outro_info: vec![],
+            scenes: vec![storyboard::MoveScene {
+                ply: 2,
+                camp: 'b',
+                board_before: pieces,
+                iccs: "d9e9".into(),
+                chinese: "将4平5".into(),
+                score: -300,
+                score_text: "-300 较差".into(),
+                winrate: Some(400),
+                capture: None,
+                check: false,
+                mate: false,
+                comment: "将4平5".into(),
+                branches: vec![storyboard::Branch {
+                    iccs: "d9d8".into(),
+                    chinese: "将4退1".into(),
+                    gap: 320,
+                    note: "明显吃亏".into(),
+                    reply: Some("f0f8".into()),
+                    reply_chinese: Some("车四进八".into()),
+                    demo_comment: "假如黑方不走将4平5, 改走将4退1, 红方立即应以车四进八, 黑方明显吃亏。".into(),
+                }],
+            }],
+        };
+        (script, board)
+    }
+
+    // 带分支的剧本 → build_frame_scenes 应在分支节点后追加演示场景
+    #[test]
+    fn test_build_frame_scenes_with_branch_demo() {
+        let (script, board) = demo_script();
+        let (scenes, _) = build_frame_scenes(&script, &board);
+        // 开场 + 主线 + 分支演示 + 结尾
+        assert_eq!(scenes.len(), 4);
+
+        let demo = &scenes[2];
+        assert!(demo.move_iccs.is_none());
+        let bd = demo.branch_demo.as_ref().expect("应有分支演示数据");
+        assert_eq!(bd.alt_iccs, "d9d8");
+        assert_eq!(bd.reply_iccs.as_deref(), Some("f0f8"));
+        assert!((demo.anim_ratio - 0.7).abs() < 1e-6, "有反制时动画应占 0.7");
+        assert!(demo.subtitle.contains("假如黑方不走"));
+        assert!(demo.score_line.contains("假如黑方不走将4平5"));
+
+        // 演示场景落定局面 = 根局面 + 备选防着 + 进攻方反制
+        let root = chess::board_from_positions(&script.scenes[0].board_before).unwrap();
+        let expected = chess::board_move(chess::board_move(root, "d9d8"), "f0f8");
+        let after = chess::board_from_positions(&demo.board_after).unwrap();
+        assert_eq!(after, expected);
+    }
+
+    // 视觉验证: 渲染演示场景关键帧到 scripts/out/branch_demo/ (人工查看)
+    #[test]
+    #[ignore]
+    fn test_dump_branch_demo_frames() {
+        let (script, board) = demo_script();
+        let (scenes, _) = build_frame_scenes(&script, &board);
+        let renderer = Renderer::new().unwrap();
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../scripts/out/branch_demo");
+        std::fs::create_dir_all(&dir).unwrap();
+        for (name, t) in [("1_x_anim", 0.15), ("2_x_done", 0.45), ("3_reply_anim", 0.65), ("4_reply_done", 0.9), ("5_settled", 1.0)] {
+            let frame = renderer.render_frame(&scenes[2], t);
+            let path = dir.join(format!("{name}.png"));
+            frame.save(&path).unwrap();
+            println!("saved {}", path.display());
+        }
     }
 }
 

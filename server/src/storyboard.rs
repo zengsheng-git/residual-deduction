@@ -23,6 +23,9 @@ pub struct Branch {
     pub chinese: String,
     pub gap: isize,
     pub note: String,
+    pub reply: Option<String>,         // 对方最强应对(备选线 PV 第2着)
+    pub reply_chinese: Option<String>, // 应对的中文纵线记法
+    pub demo_comment: String,          // 分支演示场景解说词
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -52,22 +55,6 @@ pub struct Script {
     pub outro_comment: String,
     pub outro_info: Vec<String>,
     pub scenes: Vec<MoveScene>,
-}
-
-fn node_is_branch_root(ply: usize, prev_check: bool, score: isize, budget_left: bool) -> bool {
-    if !budget_left {
-        return false;
-    }
-    if ply == 0 {
-        return true;
-    }
-    if score >= 29000 {
-        return true;
-    }
-    if prev_check {
-        return true;
-    }
-    ply % 4 == 3
 }
 
 fn verdict_text(score: isize, camp: &Camp) -> String {
@@ -121,14 +108,14 @@ pub fn build(
     let mut ply = 0usize;
     let mut scenes: Vec<MoveScene> = Vec::new();
     let mut branch_budget = branch_budget.min(6);
-    let mut prev_check = false;
 
-    // 根节点搜索(带多候选)
+    // 根节点搜索(根节点是先行方的决策点, 不做分支分析, 单线搜索即可)
     if stop.load(Ordering::Relaxed) {
         return Err("已取消".to_string());
     }
+    let root_cfg = EngineConfig { multipv: 1, ..*cfg };
     let root = engine
-        .search(&board_fen(&cur_camp, cur_board), cfg)
+        .search(&board_fen(&cur_camp, cur_board), &root_cfg)
         .ok_or_else(|| "根节点搜索失败, 该局面可能已经结束".to_string())?;
     let mut node_score: isize = root.score;
     // node_score 是 node_score_camp 一方的视角评分; 走子方视角需换算
@@ -145,11 +132,9 @@ pub fn build(
             return Err("已取消".to_string());
         }
 
-        // 分支节点: 用 MultiPV 重搜当前局面, 获取备选着法并刷新后续主线
+        // 分支节点: 只推演防守方(对方)的备选防着 — 展示"假如不走正着"如何被反制
         let mut branches: Vec<Branch> = Vec::new();
-        // 当前节点的评分换算到走子方视角
-        let score_for_mover = if node_score_camp == cur_camp { node_score } else { -node_score };
-        let want_branch = node_is_branch_root(ply, prev_check, score_for_mover, branch_budget > 0);
+        let want_branch = branch_budget > 0 && cur_camp != start_camp;
         if want_branch {
             match engine.search(&board_fen(&cur_camp, cur_board), cfg) {
                 Some(r) => {
@@ -157,10 +142,29 @@ pub fn build(
                     node_score_camp = cur_camp;
                     node_winrate = r.winrate;
                     queue = r.pvs.clone();
-                    let alts: Vec<(String, isize)> = r.alternatives.iter().cloned().zip(r.alt_scores.iter().cloned()).collect();
-                    for (alt, gap) in alts.into_iter().take(2) {
+                    for (i, alt) in r.alternatives.iter().cloned().enumerate().take(2) {
+                        let gap = r.alt_scores.get(i).copied().unwrap_or(0);
                         let alt_chinese = board_move_chinese(cur_board, &alt);
-                        branches.push(Branch { iccs: alt.clone(), chinese: alt_chinese, gap, note: narrator::gap_text(gap).to_string() });
+                        // 备选后的局面评分(防守方视角): 杀棋分数之间差距被压缩, 需按原始评分判断
+                        let alt_raw = r.score - gap;
+                        // 备选线完整变化(PV)的第2着即进攻方的反制应手; 被更快绝杀或分差明显时演示
+                        let reply = if alt_raw <= -29000 || gap > 30 { r.alt_pvs.get(i).and_then(|pv| pv.get(1).cloned()) } else { None };
+                        // 防守方视角注解: 被更快绝杀时给出步数, 否则用分差解读
+                        let note = if alt_raw <= -29000 {
+                            format!("{}步被杀", 30000 + alt_raw)
+                        } else {
+                            narrator::gap_text(gap).to_string()
+                        };
+                        let reply_chinese = reply.as_ref().map(|rv| board_move_chinese(board_move(cur_board, &alt), rv));
+                        branches.push(Branch {
+                            iccs: alt,
+                            chinese: alt_chinese,
+                            gap,
+                            note,
+                            reply,
+                            reply_chinese,
+                            demo_comment: String::new(),
+                        });
                     }
                     if !branches.is_empty() {
                         branch_budget -= 1;
@@ -206,7 +210,12 @@ pub fn build(
         let mate_move = score_for_mover >= 29999;
         let chinese = board_move_chinese(before, &best);
 
-        let branch_pairs: Vec<(String, isize)> = branches.iter().map(|b| (b.chinese.clone(), b.gap)).collect();
+        // 分支演示解说词需要正着(被假设"不走"的那手)的中文记法, 在此处填充
+        for b in &mut branches {
+            b.demo_comment = narrator::branch_demo_comment(&mover, &chinese, &b.chinese, b.reply_chinese.as_deref(), &b.note);
+        }
+
+        let branch_pairs: Vec<(String, String)> = branches.iter().map(|b| (b.chinese.clone(), b.note.clone())).collect();
         let comment = narrator::move_comment(&before, &best, &chinese, &mover, capture, check, mate_move, score_for_mover, &branch_pairs);
 
         scenes.push(MoveScene {
@@ -217,7 +226,8 @@ pub fn build(
             chinese,
             score: score_for_mover,
             score_text: narrator::eval_text(score_for_mover),
-            winrate: node_winrate,
+            // 胜率取最近一次搜索的行棋方胜率; 若最近搜索方不是本步走子方则换算视角
+            winrate: node_winrate.map(|wr| if node_score_camp == mover { wr } else { 1000 - wr }),
             capture,
             check,
             mate: mate_move,
@@ -227,7 +237,6 @@ pub fn build(
 
         cur_board = after;
         cur_camp = mover.opposite();
-        prev_check = check;
         ply += 1;
 
         if mate_move || ply >= MAX_PLIES {
@@ -326,7 +335,7 @@ mod tests {
         for s in &out.script.scenes {
             println!("#{} {} -> {} | {}", s.ply, s.iccs, s.chinese, s.comment);
             for b in &s.branches {
-                println!("    分支: {} (亏{})", b.chinese, b.gap);
+                println!("    分支: {} (亏{}) 反制: {:?} 演示词: {}", b.chinese, b.gap, b.reply_chinese, b.demo_comment);
             }
         }
         println!("outro: {}", out.script.outro_comment);

@@ -44,12 +44,20 @@ const SPRITE_FRAME: [(char, usize); 14] = [
     ('r', 7), ('n', 8), ('b', 9), ('a', 10), ('k', 11), ('c', 12), ('p', 13),
 ];
 
+// 分支演示: 在 board_before 局面上假设走 alt, 对方以 reply 反制
+#[derive(Debug, Clone, Serialize)]
+pub struct BranchDemo {
+    pub alt_iccs: String,           // 假设的备选着法
+    pub reply_iccs: Option<String>, // 对方反制着法(无则只演示备选)
+}
+
 // 一个场景的一帧所需全部数据
 #[derive(Debug, Clone, Serialize)]
 pub struct FrameScene {
     pub board_before: Vec<chess::Position>,
     pub board_after: Vec<chess::Position>,
     pub move_iccs: Option<String>, // Move 场景: 本步着法
+    pub branch_demo: Option<BranchDemo>, // 分支演示场景(与 move_iccs 互斥)
     pub camp: char,                // 行棋方 'w'/'b'
     pub title: String,
     pub verdict: String,
@@ -249,42 +257,17 @@ impl Renderer {
         let before = Self::board_from(&scene.board_before);
         let after = Self::board_from(&scene.board_after);
 
-        let animating = t < 1.0 && scene.move_iccs.is_some();
-        if animating {
+        let animating = t < 1.0 && (scene.move_iccs.is_some() || scene.branch_demo.is_some());
+        if let Some(demo) = &scene.branch_demo {
+            self.draw_demo(&mut canvas, demo, &before, &after, t, animating);
+        } else if animating {
             // 动画阶段: 其他棋子取 before 局面, 移动棋子单独插值
-            let (fx, fy, tx, ty, piece) = {
-                let mut cs = scene.move_iccs.as_ref().unwrap().chars();
-                let fx = cs.next().unwrap() as usize - 97;
-                let fy = 9 - cs.next().unwrap().to_digit(10).unwrap() as usize;
-                let tx = cs.next().unwrap() as usize - 97;
-                let ty = 9 - cs.next().unwrap().to_digit(10).unwrap() as usize;
-                (fx, fy, tx, ty, before[fy][fx])
-            };
-            // 出发点标记
-            self.draw_ring(&mut canvas, px(fx), py(fy), 46, Rgba([235, 84, 60, 160]));
-            for row in 0..10 {
-                for col in 0..9 {
-                    if (col, row) != (fx, fy) && before[row][col] != ' ' {
-                        self.draw_piece(&mut canvas, &before, col, row);
-                    }
-                }
-            }
-            // ease-out cubic
-            let ease = 1.0 - (1.0 - t).powi(3);
-            let cx = (px(fx) as f32 + (px(tx) - px(fx)) as f32 * ease) as i32;
-            let cy = (py(fy) as f32 + (py(ty) - py(fy)) as f32 * ease) as i32;
-            if piece != ' ' {
-                self.draw_piece_at(&mut canvas, piece, cx, cy);
-            }
+            self.draw_move_anim(&mut canvas, &before, scene.move_iccs.as_ref().unwrap(), t);
         } else {
             // 落定状态
             self.draw_board_pieces(&mut canvas, &after);
             if let Some(iccs) = &scene.move_iccs {
-                let mut cs = iccs.chars();
-                let fx = cs.next().unwrap() as usize - 97;
-                let fy = 9 - cs.next().unwrap().to_digit(10).unwrap() as usize;
-                let tx = cs.next().unwrap() as usize - 97;
-                let ty = 9 - cs.next().unwrap().to_digit(10).unwrap() as usize;
+                let (fx, fy, tx, ty, _) = Self::iccs_endpoints(&after, iccs);
                 self.draw_ring(&mut canvas, px(fx), py(fy), 46, Rgba([235, 84, 60, 170]));
                 self.draw_ring(&mut canvas, px(tx), py(ty), 50, RED_MARK);
             }
@@ -300,6 +283,66 @@ impl Renderer {
         self.draw_panel(&mut canvas, scene, animating);
         self.draw_subtitle(&mut canvas, &scene.subtitle);
         canvas
+    }
+
+    // 解析 iccs 着法 → (from_x, from_y, to_x, to_y, 移动的棋子)
+    fn iccs_endpoints(board: &Board, iccs: &str) -> (usize, usize, usize, usize, char) {
+        let mut cs = iccs.chars();
+        let fx = cs.next().unwrap() as usize - 97;
+        let fy = 9 - cs.next().unwrap().to_digit(10).unwrap() as usize;
+        let tx = cs.next().unwrap() as usize - 97;
+        let ty = 9 - cs.next().unwrap().to_digit(10).unwrap() as usize;
+        (fx, fy, tx, ty, board[fy][fx])
+    }
+
+    // 走子动画帧: 其他棋子取 before 局面, 移动棋子按 ease-out 插值, t in [0,1]
+    fn draw_move_anim(&self, canvas: &mut RgbaImage, before: &Board, iccs: &str, t: f32) {
+        let (fx, fy, tx, ty, piece) = Self::iccs_endpoints(before, iccs);
+        // 出发点标记
+        self.draw_ring(canvas, px(fx), py(fy), 46, Rgba([235, 84, 60, 160]));
+        for row in 0..10 {
+            for col in 0..9 {
+                if (col, row) != (fx, fy) && before[row][col] != ' ' {
+                    self.draw_piece(canvas, before, col, row);
+                }
+            }
+        }
+        let ease = 1.0 - (1.0 - t).powi(3);
+        let cx = (px(fx) as f32 + (px(tx) - px(fx)) as f32 * ease) as i32;
+        let cy = (py(fy) as f32 + (py(ty) - py(fy)) as f32 * ease) as i32;
+        if piece != ' ' {
+            self.draw_piece_at(canvas, piece, cx, cy);
+        }
+    }
+
+    // 分支演示帧: 前半程演示备选着法, 后半程演示对方反制; 落定后标记两步着法
+    fn draw_demo(&self, canvas: &mut RgbaImage, demo: &BranchDemo, before: &Board, after: &Board, t: f32, animating: bool) {
+        let (alt_fx, alt_fy, alt_tx, alt_ty, _) = Self::iccs_endpoints(before, &demo.alt_iccs);
+        if animating {
+            match &demo.reply_iccs {
+                Some(reply) if t >= 0.5 => {
+                    // 第二段: 对方反制; 淡显备选落点提示这是假设走法
+                    self.draw_ring(canvas, px(alt_tx), py(alt_ty), 46, Rgba([235, 84, 60, 90]));
+                    let after_alt = chess::board_move(*before, &demo.alt_iccs);
+                    self.draw_move_anim(canvas, &after_alt, reply, (t - 0.5) * 2.0);
+                }
+                _ => {
+                    // 第一段: 备选着法(有反制时占前半程, 否则占整段动画)
+                    let progress = if demo.reply_iccs.is_some() { t * 2.0 } else { t };
+                    self.draw_move_anim(canvas, before, &demo.alt_iccs, progress);
+                }
+            }
+        } else {
+            self.draw_board_pieces(canvas, after);
+            // 备选着法: 红圈; 对方反制: 金圈
+            self.draw_ring(canvas, px(alt_fx), py(alt_fy), 46, Rgba([235, 84, 60, 170]));
+            self.draw_ring(canvas, px(alt_tx), py(alt_ty), 50, RED_MARK);
+            if let Some(reply) = &demo.reply_iccs {
+                let (r_fx, r_fy, r_tx, r_ty, _) = Self::iccs_endpoints(after, reply);
+                self.draw_ring(canvas, px(r_fx), py(r_fy), 46, Rgba([230, 179, 74, 170]));
+                self.draw_ring(canvas, px(r_tx), py(r_ty), 50, GOLD);
+            }
+        }
     }
 
     fn draw_panel(&self, canvas: &mut RgbaImage, scene: &FrameScene, animating: bool) {

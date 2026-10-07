@@ -17,6 +17,7 @@ pub struct QueryResult {
     pub pvs: Vec<String>,          // 最优线完整着法(iccs)
     pub alternatives: Vec<String>, // 次优候选首着(iccs)
     pub alt_scores: Vec<isize>,    // 次优候选与最优的分差
+    pub alt_pvs: Vec<Vec<String>>, // 次优候选完整变化线(与 alternatives 平行, 第2着即对方应对)
     pub winrate: Option<usize>,    // 行棋方胜率(千分比)
     pub state: QueryState,
 }
@@ -202,6 +203,7 @@ impl Engine {
                 if *sc >= result.score - alt_score_gap {
                     result.alternatives.push(first.clone());
                     result.alt_scores.push(result.score - sc);
+                    result.alt_pvs.push(pvs.clone());
                 }
             }
         }

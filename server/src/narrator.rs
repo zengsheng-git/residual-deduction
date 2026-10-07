@@ -99,7 +99,7 @@ pub fn move_comment(
     check: bool,
     mate: bool,
     node_score: isize,
-    branches: &[(String, isize)],
+    branches: &[(String, String)],
 ) -> String {
     let mut parts: Vec<String> = Vec::new();
     parts.push(chinese.to_string());
@@ -121,16 +121,40 @@ pub fn move_comment(
             parts.push(format!("引擎判断再走{}步可以绝杀", n));
         }
     }
-    for (alt_chinese, gap) in branches.iter().take(2) {
-        if *gap <= 30 {
+    for (alt_chinese, note) in branches.iter().take(2) {
+        if note == "与主招几乎等效" {
             parts.push(format!("如果改走{}, 效果与主招相当", alt_chinese));
         } else {
-            parts.push(format!("如果改走{}, {}方有反制, {}", alt_chinese, camp_name(&camp.opposite()), gap_text(*gap)));
+            parts.push(format!("如果改走{}, {}方有反制, {}", alt_chinese, camp_name(&camp.opposite()), note));
         }
     }
     let _ = board_before;
     let _ = iccs;
     parts.join(", ")
+}
+
+// 分支演示场景解说词: 假设防守方不走主线防着, 展示其备选防着与进攻方的反制
+pub fn branch_demo_comment(defender: &Camp, main_chinese: &str, alt_chinese: &str, reply_chinese: Option<&str>, note: &str) -> String {
+    let attacker = camp_name(&defender.opposite());
+    match reply_chinese {
+        Some(reply) => format!(
+            "假如{}方不走{}, 改走{}, {}方立即应以{}, {}方{}。",
+            camp_name(defender),
+            main_chinese,
+            alt_chinese,
+            attacker,
+            reply,
+            camp_name(defender),
+            note
+        ),
+        None => format!(
+            "假如{}方不走{}, 改走{}, 效果与正着相当, {}方的进攻路线不变。",
+            camp_name(defender),
+            main_chinese,
+            alt_chinese,
+            attacker
+        ),
+    }
 }
 
 pub fn intro_comment(camp: &Camp, red_material: &str, black_material: &str, verdict: &str) -> String {
@@ -185,5 +209,22 @@ mod tests {
         assert_eq!(mate_moves(29998), Some(2));
         assert_eq!(mate_moves(29994), Some(6));
         assert_eq!(mate_moves(500), None);
+    }
+
+    #[test]
+    fn test_branch_demo_comment() {
+        let black = Camp::Black;
+        assert_eq!(
+            branch_demo_comment(&black, "将4平5", "车4退2", Some("车五进一"), "明显吃亏"),
+            "假如黑方不走将4平5, 改走车4退2, 红方立即应以车五进一, 黑方明显吃亏。"
+        );
+        assert_eq!(
+            branch_demo_comment(&black, "将4平5", "将4退1", Some("车四进八"), "1步被杀"),
+            "假如黑方不走将4平5, 改走将4退1, 红方立即应以车四进八, 黑方1步被杀。"
+        );
+        assert_eq!(
+            branch_demo_comment(&black, "将4平5", "车4退2", None, "与主招几乎等效"),
+            "假如黑方不走将4平5, 改走车4退2, 效果与正着相当, 红方的进攻路线不变。"
+        );
     }
 }
