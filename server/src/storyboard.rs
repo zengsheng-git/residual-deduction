@@ -218,7 +218,7 @@ pub fn build(
         }
 
         let branch_pairs: Vec<(String, String)> = branches.iter().map(|b| (b.chinese.clone(), b.note.clone())).collect();
-        let comment = narrator::move_comment(&before, &best, &chinese, &mover, capture, check, mate_move, score_for_mover, &branch_pairs);
+        let comment = narrator::move_comment(&before, &best, &chinese, &mover, capture, check, mate_move, &branch_pairs);
 
         scenes.push(MoveScene {
             ply: ply + 1,

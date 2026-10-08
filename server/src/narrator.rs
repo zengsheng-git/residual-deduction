@@ -98,7 +98,6 @@ pub fn move_comment(
     capture: Option<char>,
     check: bool,
     mate: bool,
-    node_score: isize,
     branches: &[(String, String)],
 ) -> String {
     let mut parts: Vec<String> = Vec::new();
@@ -115,11 +114,6 @@ pub fn move_comment(
         }
     } else if check {
         parts.push("将军!".to_string());
-    }
-    if let Some(n) = mate_moves(node_score) {
-        if n > 1 {
-            parts.push(format!("再走{}步就能绝杀", n));
-        }
     }
     for (alt_chinese, note) in branches.iter().take(2) {
         if note == "与主招几乎等效" {
