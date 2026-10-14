@@ -22,8 +22,28 @@ pub struct Settings {
     pub voice_enabled: bool,    // 默认生成语音解说
     pub branches_enabled: bool, // 默认包含分支推演
     pub autoplay_sound: bool,
+    #[serde(default = "default_aspect")]
+    pub aspect: String, // 默认画幅: portrait 竖版9:16 / landscape 横版16:9
+    #[serde(default = "default_true")]
+    pub sfx_enabled: bool, // 走子/吃子/将军音效
+    #[serde(default = "default_true")]
+    pub bgm_enabled: bool, // 背景音乐(music 目录随机选用)
+    #[serde(default = "default_bgm_volume")]
+    pub bgm_volume: u32, // BGM 音量 0~100
     #[serde(default)]
     pub polish: crate::polish::PolishConfig, // AI 解说润色(可选)
+}
+
+fn default_aspect() -> String {
+    "portrait".to_string()
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_bgm_volume() -> u32 {
+    20
 }
 
 impl Default for Settings {
@@ -37,6 +57,10 @@ impl Default for Settings {
             voice_enabled: true,
             branches_enabled: true,
             autoplay_sound: true,
+            aspect: default_aspect(),
+            sfx_enabled: true,
+            bgm_enabled: true,
+            bgm_volume: default_bgm_volume(),
             polish: Default::default(),
         }
     }

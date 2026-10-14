@@ -4,12 +4,23 @@ import { NButton, NCard, NEmpty, NSpace, NTag } from "naive-ui";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { onMounted, onUnmounted, ref } from "vue";
 
-import { deleteVideo, listenDone, listVideos, openVideosFolder, type VideoMeta } from "../api";
+import { deleteVideo, getPublishText, listenDone, listVideos, openVideosFolder, type VideoMeta } from "../api";
 
 const message = useMessage();
 const dialog = useDialog();
 const videos = ref<VideoMeta[]>([]);
 const playing = ref<VideoMeta | null>(null);
+
+// 复制发布文案(标题/话题/简介/置顶评论)
+async function copyPublish(v: VideoMeta) {
+    try {
+        const text = await getPublishText(v.id);
+        await navigator.clipboard.writeText(text);
+        message.success("发布文案已复制, 可直接粘贴到抖音发布页");
+    } catch (e) {
+        message.error(`复制失败: ${e}`);
+    }
+}
 
 async function refresh() {
     try {
@@ -99,7 +110,7 @@ function remove(v: VideoMeta) {
     <div class="grid">
       <n-card v-for="v in videos" :key="v.id" size="small" class="video-card" :title="v.title">
         <template #cover>
-          <img class="thumb" :src="convertFileSrc(v.thumb_path)" alt="" @click="play(v)" />
+          <img class="thumb" :src="convertFileSrc(v.cover_path || v.thumb_path)" alt="" @click="play(v)" />
         </template>
         <div class="meta">
           <div class="tag-row">
@@ -114,6 +125,7 @@ function remove(v: VideoMeta) {
         <template #action>
           <n-space>
             <n-button size="small" type="primary" @click="play(v)">播放</n-button>
+            <n-button size="small" type="warning" ghost @click="copyPublish(v)">复制文案</n-button>
             <n-button size="small" type="error" ghost @click="remove(v)">删除</n-button>
           </n-space>
         </template>

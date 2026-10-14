@@ -26,6 +26,7 @@ export interface VideoMeta {
     move_count: number;
     video_path: string;
     thumb_path: string;
+    cover_path: string; // 竖版封面卡(发布用), 旧视频为空
     polished: boolean; // 解说词经过 AI 润色
 }
 
@@ -46,6 +47,10 @@ export interface GenParams {
     rate: number;
     voice_enabled: boolean;    // 是否生成语音解说
     branches_enabled: boolean; // 是否包含分支推演
+    sfx_enabled: boolean;      // 走子/吃子/将军音效
+    bgm_enabled: boolean;      // 背景音乐
+    bgm_volume: number;        // BGM 音量 0~100, 0 表示用设置页音量
+    aspect: string;            // portrait 竖版9:16 / landscape 横版16:9
 }
 
 export interface PolishSettings {
@@ -64,6 +69,10 @@ export interface AppSettings {
     voice_enabled: boolean;
     branches_enabled: boolean;
     autoplay_sound: boolean;
+    aspect: string; // 默认画幅
+    sfx_enabled: boolean; // 走子/吃子/将军音效
+    bgm_enabled: boolean; // 背景音乐
+    bgm_volume: number;   // BGM 音量 0~100
     polish: PolishSettings;
 }
 
@@ -72,6 +81,11 @@ export const VOICES: { value: string; label: string }[] = [
     { value: "zh-CN-YunyangNeural", label: "云扬 · 男声播报" },
     { value: "zh-CN-XiaoxiaoNeural", label: "晓晓 · 女声" },
     { value: "zh-CN-XiaoyiNeural", label: "晓伊 · 女声" },
+];
+
+export const ASPECTS: { value: string; label: string }[] = [
+    { value: "portrait", label: "竖版 9:16 · 抖音" },
+    { value: "landscape", label: "横版 16:9 · 经典" },
 ];
 
 export async function recognizeImage(bytes: Uint8Array): Promise<Recognition> {
@@ -94,12 +108,22 @@ export async function getVideoScript(id: string): Promise<unknown> {
     return invoke("get_video_script", { id });
 }
 
+// 读取发布文案(标题/话题/简介/置顶评论)
+export async function getPublishText(id: string): Promise<string> {
+    return invoke("get_publish_text", { id });
+}
+
 export async function deleteVideo(id: string): Promise<void> {
     await invoke("delete_video", { id });
 }
 
 export async function openVideosFolder(): Promise<void> {
     await invoke("open_videos_folder");
+}
+
+// 打开背景音乐目录(用户把 mp3 等音频放进去)
+export async function openMusicFolder(): Promise<void> {
+    await invoke("open_music_folder");
 }
 
 export async function getSettings(): Promise<AppSettings> {

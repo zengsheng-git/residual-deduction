@@ -19,12 +19,13 @@ use crate::engine::EngineConfig;
 use crate::library;
 use crate::library::VideoMeta;
 use crate::polish;
+use crate::render::Aspect;
 use crate::render::BranchDemo;
 use crate::render::FrameScene;
 use crate::render::Renderer;
-use crate::render::CANVAS_H;
-use crate::render::CANVAS_W;
 use crate::render::FPS;
+use crate::sfx;
+use crate::sfx::Sfx;
 use crate::storyboard;
 use crate::tts;
 use crate::video;
@@ -50,6 +51,14 @@ pub struct GenParams {
     pub voice_enabled: bool,     // 是否生成语音解说(关闭则字幕静音)
     #[serde(default = "default_true")]
     pub branches_enabled: bool,  // 是否包含分支推演(关闭则纯主线)
+    #[serde(default)]
+    pub aspect: String,          // 画幅: "portrait" 竖版9:16(默认) / "landscape" 横版16:9, 空串回落设置页
+    #[serde(default = "default_true")]
+    pub sfx_enabled: bool,       // 走子/吃子/将军音效
+    #[serde(default = "default_true")]
+    pub bgm_enabled: bool,       // 背景音乐(music 目录随机选用)
+    #[serde(default)]
+    pub bgm_volume: u32,         // BGM 音量 0~100, 0 回落设置页
 }
 
 fn default_true() -> bool {
@@ -58,24 +67,8 @@ fn default_true() -> bool {
 
 // 生成一段静音 wav(网络 TTS 失败时兜底, 保证视频仍可产出)
 fn write_silent_wav(path: &Path, seconds: f64) -> Result<(), String> {
-    let sample_rate = 24000u32;
-    let samples = (seconds * sample_rate as f64) as u32;
-    let data_len = samples * 2;
-    let mut bytes: Vec<u8> = Vec::with_capacity(44 + data_len as usize);
-    bytes.extend_from_slice(b"RIFF");
-    bytes.extend_from_slice(&(36 + data_len).to_le_bytes());
-    bytes.extend_from_slice(b"WAVEfmt ");
-    bytes.extend_from_slice(&16u32.to_le_bytes());
-    bytes.extend_from_slice(&1u16.to_le_bytes()); // pcm
-    bytes.extend_from_slice(&1u16.to_le_bytes()); // mono
-    bytes.extend_from_slice(&sample_rate.to_le_bytes());
-    bytes.extend_from_slice(&(sample_rate * 2).to_le_bytes());
-    bytes.extend_from_slice(&2u16.to_le_bytes());
-    bytes.extend_from_slice(&16u16.to_le_bytes());
-    bytes.extend_from_slice(b"data");
-    bytes.extend_from_slice(&data_len.to_le_bytes());
-    bytes.extend(std::iter::repeat_n(0u8, data_len as usize));
-    std::fs::write(path, bytes).map_err(|e| format!("写入静音音频失败: {e}"))
+    let samples = (seconds * sfx::SR as f64) as usize;
+    sfx::write_wav(path, &vec![0i16; samples])
 }
 
 fn now_ms() -> u64 {
@@ -102,16 +95,64 @@ fn make_id() -> String {
 }
 
 fn frame_to_rgb(frame: &image::RgbaImage) -> Vec<u8> {
-    let mut rgb = Vec::with_capacity((CANVAS_W * CANVAS_H * 3) as usize);
+    let (w, h) = frame.dimensions();
+    let mut rgb = Vec::with_capacity((w * h * 3) as usize);
     for p in frame.pixels() {
         rgb.extend_from_slice(&[p[0], p[1], p[2]]);
     }
     rgb
 }
 
-// 构造场景帧数据
+// 发布文案: 标题/话题/简介/置顶评论(抖音发布页直接照抄)
+fn build_publish_text(script: &storyboard::Script) -> String {
+    let mate = script.scenes.iter().any(|s| s.mate);
+    let mut tags = "#象棋 #残局 #象棋残局 #中国象棋".to_string();
+    if mate {
+        tags.push_str(" #绝杀");
+    }
+    let camp = if script.camp == 'w' { "红" } else { "黑" };
+    let intro = format!("{camp}方先行, 这盘残局你看怎么赢? 完整推演 {} 步, {}。", script.scenes.len(), script.verdict);
+    let pinned = match script.scenes.last() {
+        Some(last) => format!("答案揭晓: 终局是第{}步 {}{}。你猜对了吗?", last.ply, last.chinese, if mate { "绝杀" } else { "" }),
+        None => "答案在视频里, 你猜对了吗?".to_string(),
+    };
+    format!("[标题]\n{}\n\n[话题]\n{}\n\n[简介]\n{}你觉得哪一步最关键? 评论区聊聊。\n\n[置顶评论]\n{}", script.title, tags, intro, pinned)
+}
+
+// 照谱走子清单: 录屏/实摆时照抄的底稿
+fn build_moves_text(script: &storyboard::Script) -> String {
+    let camp = if script.camp == 'w' { "红" } else { "黑" };
+    let mut lines = vec![format!("{}方先行 · 共 {} 步", camp, script.scenes.len())];
+    for s in &script.scenes {
+        let side = if s.camp == 'w' { "红" } else { "黑" };
+        lines.push(format!("{}. {}方 {}   (评分 {})", s.ply, side, s.chinese, s.score_text));
+    }
+    if let Some(last) = script.scenes.last()
+        && last.mate
+    {
+        lines.push(format!("终局: 第{}步 {} 绝杀", last.ply, last.chinese));
+    }
+    lines.join("\n")
+}
+
+// music 目录下的音频文件(按文件名排序), 目录不存在返回空
+fn list_music(dir: &Path) -> Vec<PathBuf> {
+    let is_audio = |ext: &str| matches!(ext, "mp3" | "wav" | "m4a" | "flac" | "ogg");
+    let mut out: Vec<PathBuf> = std::fs::read_dir(dir)
+        .map(|rd| {
+            rd.flatten()
+                .map(|e| e.path())
+                .filter(|p| p.is_file() && p.extension().map(|x| is_audio(&x.to_string_lossy().to_lowercase())).unwrap_or(false))
+                .collect()
+        })
+        .unwrap_or_default();
+    out.sort();
+    out
+}
+
+// 构造场景帧数据. subtitle_max_chars 取自渲染布局(竖版/横版不同), 用于字幕分段
 #[allow(clippy::too_many_arguments)]
-fn build_frame_scenes(script: &storyboard::Script, start_board: &Board) -> (Vec<FrameScene>, Board) {
+fn build_frame_scenes(script: &storyboard::Script, start_board: &Board, subtitle_max_chars: usize) -> (Vec<FrameScene>, Board) {
     let mut scenes: Vec<FrameScene> = Vec::new();
     let mut log: Vec<String> = Vec::new();
 
@@ -123,14 +164,17 @@ fn build_frame_scenes(script: &storyboard::Script, start_board: &Board) -> (Vec<
         branch_demo: None,
         camp: script.camp,
         title: script.title.clone(),
-        verdict: script.verdict.clone(),
+        verdict: "你能看出必胜的路线吗?".to_string(),
         score_line: "开局分析".to_string(),
         winrate: None,
         log: vec![],
         current_idx: None,
+        current_move: None,
+        sfx: vec![],
         branches: vec![],
         info_lines: script.intro_info.clone(),
         subtitle: script.intro_comment.clone(),
+        subtitles: crate::render::split_subtitle(&script.intro_comment, subtitle_max_chars),
         check_pos: None,
         anim_ratio: 0.0,
     });
@@ -150,6 +194,17 @@ fn build_frame_scenes(script: &storyboard::Script, start_board: &Board) -> (Vec<
 
         let check_pos = if s.check { find_king(&after, if s.camp == 'w' { 'k' } else { 'K' }) } else { None };
 
+        // 音效标注: 落子点在动画结束处(占比=动画占比); 绝杀用收尾音, 吃子用重音, 将军叠加提示音
+        let move_sfx = if s.mate {
+            vec![(0.35, Sfx::Mate)]
+        } else {
+            let mut v = vec![(0.35, if s.capture.is_some() { Sfx::Capture } else { Sfx::Click })];
+            if s.check {
+                v.push((0.35, Sfx::Check));
+            }
+            v
+        };
+
         scenes.push(FrameScene {
             board_before: s.board_before.clone(),
             board_after: chess::board_map(after).into_iter().filter(|p| p.piece != ' ').collect(),
@@ -157,14 +212,17 @@ fn build_frame_scenes(script: &storyboard::Script, start_board: &Board) -> (Vec<
             branch_demo: None,
             camp: s.camp,
             title: script.title.clone(),
-            verdict: script.verdict.clone(),
+            verdict: String::new(), // 主线不剧透结论, 揭晓留给结尾
             score_line: format!("第{}步 · 评分 {}", s.ply, s.score_text),
             winrate: s.winrate,
             log: log.clone(),
             current_idx: Some(idx),
+            current_move: Some(format!("第{}步 · {}", s.ply, s.chinese)),
+            sfx: move_sfx,
             branches,
             info_lines: vec![],
             subtitle: s.comment.clone(),
+            subtitles: crate::render::split_subtitle(&s.comment, subtitle_max_chars),
             check_pos,
             anim_ratio: 0.35,
         });
@@ -176,11 +234,28 @@ fn build_frame_scenes(script: &storyboard::Script, start_board: &Board) -> (Vec<
             let demo_final = b.reply.as_ref().map(|r| chess::board_move(after_alt, r)).unwrap_or(after_alt);
             // 演示线最后一手若形成将军, 落定帧高亮被将的将帅
             let last_mover_char = if b.reply.is_some() { if s.camp == 'w' { 'b' } else { 'w' } } else { s.camp };
-            let check_pos = if attack::gives_check(&demo_final, &Camp::from_char(last_mover_char)) {
+            let reply_check = attack::gives_check(&demo_final, &Camp::from_char(last_mover_char));
+            let check_pos = if reply_check {
                 find_king(&demo_final, if last_mover_char == 'w' { 'k' } else { 'K' })
             } else {
                 None
             };
+            // 音效标注: 有反制时备选着法在动画中点落子, 反制应手在动画结束处落子
+            let anim = if b.reply.is_some() { 0.7 } else { 0.35 };
+            let mut demo_sfx: Vec<(f32, Sfx)> = Vec::new();
+            if let Some(reply) = &b.reply {
+                demo_sfx.push((anim * 0.5, Sfx::Click));
+                if chess::captured_piece(after_alt, reply).is_some() {
+                    demo_sfx.push((anim, Sfx::Capture));
+                } else {
+                    demo_sfx.push((anim, Sfx::Click));
+                }
+                if reply_check {
+                    demo_sfx.push((anim, Sfx::Check));
+                }
+            } else {
+                demo_sfx.push((anim, Sfx::Click));
+            }
             scenes.push(FrameScene {
                 board_before: s.board_before.clone(),
                 board_after: chess::board_map(demo_final).into_iter().filter(|p| p.piece != ' ').collect(),
@@ -188,16 +263,19 @@ fn build_frame_scenes(script: &storyboard::Script, start_board: &Board) -> (Vec<
                 branch_demo: Some(BranchDemo { alt_iccs: b.iccs.clone(), reply_iccs: b.reply.clone() }),
                 camp: s.camp,
                 title: script.title.clone(),
-                verdict: script.verdict.clone(),
+                verdict: String::new(),
                 score_line: format!("分支演示 · 假如{}方不走{} · {}", if s.camp == 'w' { "红" } else { "黑" }, s.chinese, b.note),
                 winrate: None,
                 log: log.clone(),
                 current_idx: Some(idx),
+                current_move: Some(format!("改走 {}", b.chinese)),
+                sfx: demo_sfx,
                 branches: vec![format!("改走{}   {}", b.chinese, b.note)],
                 info_lines: vec![],
                 subtitle: b.demo_comment.clone(),
+                subtitles: crate::render::split_subtitle(&b.demo_comment, subtitle_max_chars),
                 check_pos,
-                anim_ratio: if b.reply.is_some() { 0.7 } else { 0.35 },
+                anim_ratio: anim,
             });
         }
     }
@@ -217,14 +295,17 @@ fn build_frame_scenes(script: &storyboard::Script, start_board: &Board) -> (Vec<
         branch_demo: None,
         camp: script.camp,
         title: script.title.clone(),
-        verdict: script.verdict.clone(),
+        verdict: script.verdict.clone(), // 结尾揭晓结论
         score_line: "推演完成".to_string(),
         winrate: None,
         log,
         current_idx: None,
+        current_move: None,
+        sfx: vec![],
         branches: vec![],
         info_lines: outro_info,
         subtitle: script.outro_comment.clone(),
+        subtitles: crate::render::split_subtitle(&script.outro_comment, subtitle_max_chars),
         check_pos: None,
         anim_ratio: 0.0,
     });
@@ -310,16 +391,18 @@ pub fn generate(
         }
     }
 
-    // 3. 场景帧数据
-    let (frame_scenes, final_board) = build_frame_scenes(&script, &board);
+    // 3. 场景帧数据(渲染器先建, 字幕分段上限取自画幅布局)
+    let aspect = Aspect::from_str(&params.aspect);
+    let renderer = Renderer::new(aspect)?;
+    let (frame_scenes, final_board) = build_frame_scenes(&script, &board, renderer.layout.subtitle_max_chars);
     let total_scenes = frame_scenes.len() as u32;
+    let canvas_w = renderer.layout.canvas_w;
+    let canvas_h = renderer.layout.canvas_h;
 
     // 4. 输出目录
     let id = make_id();
     let work_dir = library::videos_dir(base_dir).join(&id);
     std::fs::create_dir_all(&work_dir).map_err(|e| format!("创建输出目录失败: {e}"))?;
-
-    let renderer = Renderer::new()?;
 
     let mut segments: Vec<PathBuf> = Vec::new();
     let mut total_duration = 0f64;
@@ -364,6 +447,13 @@ pub fn generate(
         if use_silent {
             write_silent_wav(&wav_path, dur)?;
         }
+        // 混入走子音效(失败不阻塞出片)
+        if params.sfx_enabled
+            && !scene.sfx.is_empty()
+            && let Err(e) = sfx::apply(&wav_path, &scene.sfx, dur)
+        {
+            tracing::warn!("音效混入失败(忽略): {e}");
+        }
         total_duration += dur;
 
         // 渲染帧
@@ -389,7 +479,7 @@ pub fn generate(
 
         let seg_path = work_dir.join(format!("scene_{i:02}.mp4"));
         progress(GenProgress { stage: "render".into(), current: i as u32, total: total_scenes, message: format!("渲染编码 {}/{}", i + 1, total_scenes) });
-        video::encode_segment(ffmpeg, &wav_path, &seg_path, &mut frames.filter_map(|v| if v.len() == (CANVAS_W * CANVAS_H * 3) as usize { Some(v) } else { None }))?;
+        video::encode_segment(ffmpeg, &wav_path, &seg_path, (canvas_w, canvas_h), &mut frames.filter_map(|v| if v.len() == (canvas_w * canvas_h * 3) as usize { Some(v) } else { None }))?;
         segments.push(seg_path);
     }
 
@@ -397,13 +487,36 @@ pub fn generate(
     progress(GenProgress { stage: "compose".into(), current: total_scenes, total: total_scenes, message: "拼接片段并生成封面...".into() });
     let video_path = work_dir.join("video.mp4");
     video::concat_segments(ffmpeg, &segments, &video_path, &work_dir)?;
+
+    // 背景音乐: music 目录随机选一首混入(空目录/失败都跳过, 不阻塞出片)
+    if params.bgm_enabled {
+        let musics = list_music(&library::music_dir(base_dir));
+        if musics.is_empty() {
+            progress(GenProgress { stage: "compose".into(), current: total_scenes, total: total_scenes, message: "music 目录为空, 跳过背景音乐".into() });
+        } else {
+            let pick = &musics[std::time::SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.subsec_nanos() as usize).unwrap_or(0) % musics.len()];
+            let name = pick.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            progress(GenProgress { stage: "compose".into(), current: total_scenes, total: total_scenes, message: format!("混入背景音乐: {name}") });
+            if let Err(e) = video::mix_bgm(ffmpeg, &video_path, pick, params.bgm_volume) {
+                tracing::warn!("BGM 混入失败(保留原片): {e}");
+            }
+        }
+    }
+
     let thumb_path = work_dir.join("thumb.jpg");
     let thumb_at = (total_duration * 0.45).min(4.0).max(1.0);
     video::extract_thumbnail(ffmpeg, &video_path, &thumb_path, thumb_at)?;
     let duration = video::video_duration(ffmpeg, &video_path).unwrap_or(total_duration);
 
-    // 6. 写元数据与剧本
+    // 6. 写元数据、封面卡与剧本
     let size = std::fs::metadata(&video_path).map(|m| m.len()).unwrap_or(0);
+    let cover_path = work_dir.join("cover.jpg");
+    let cover = renderer.render_cover(&board, &script.title);
+    // JPEG 编码器不支持 RGBA, 先转 RGB8
+    image::DynamicImage::ImageRgba8(cover)
+        .to_rgb8()
+        .save(&cover_path)
+        .map_err(|e| format!("封面卡生成失败: {e}"))?;
     let meta = VideoMeta {
         id: id.clone(),
         title: script.title.clone(),
@@ -414,11 +527,14 @@ pub fn generate(
         move_count: script.scenes.len(),
         video_path: video_path.to_string_lossy().into_owned(),
         thumb_path: thumb_path.to_string_lossy().into_owned(),
+        cover_path: cover_path.to_string_lossy().into_owned(),
         polished,
     };
     library::save_meta(base_dir, &meta)?;
     let script_json = serde_json::to_string_pretty(&script).map_err(|e| format!("剧本序列化失败: {e}"))?;
     std::fs::write(work_dir.join("script.json"), script_json).map_err(|e| format!("写入剧本失败: {e}"))?;
+    std::fs::write(work_dir.join("publish.txt"), build_publish_text(&script)).map_err(|e| format!("写入发布文案失败: {e}"))?;
+    std::fs::write(work_dir.join("moves.txt"), build_moves_text(&script)).map_err(|e| format!("写入走子清单失败: {e}"))?;
 
     // 清理中间产物(保留成品/封面/元数据/剧本)
     for seg in &segments {
@@ -462,6 +578,10 @@ mod tests {
             rate: 0,
             voice_enabled: true,
             branches_enabled: true,
+            aspect: "portrait".into(),
+            sfx_enabled: true,
+            bgm_enabled: true,
+            bgm_volume: 20,
         };
 
         let libs_pikafish = libs.join("pikafish");
@@ -484,6 +604,12 @@ mod tests {
         println!("duration: {:.1}s size: {} bytes", meta.duration_secs, meta.size_bytes);
         assert!(std::path::Path::new(&meta.video_path).exists());
         assert!(meta.size_bytes > 100_000);
+        // 发布就绪产物: 封面卡/发布文案/走子清单/剧本
+        let dir = std::path::Path::new(&meta.video_path).parent().unwrap();
+        for name in ["cover.jpg", "publish.txt", "moves.txt", "script.json"] {
+            let p = dir.join(name);
+            assert!(p.exists() && std::fs::metadata(&p).unwrap().len() > 0, "缺少产物 {name}");
+        }
     }
 }
 
@@ -537,7 +663,7 @@ mod branch_demo_tests {
     #[test]
     fn test_build_frame_scenes_with_branch_demo() {
         let (script, board) = demo_script();
-        let (scenes, _) = build_frame_scenes(&script, &board);
+        let (scenes, _) = build_frame_scenes(&script, &board, 24);
         // 开场 + 主线 + 分支演示 + 结尾
         assert_eq!(scenes.len(), 4);
 
@@ -546,6 +672,28 @@ mod branch_demo_tests {
         let bd = demo.branch_demo.as_ref().expect("应有分支演示数据");
         assert_eq!(bd.alt_iccs, "d9d8");
         assert_eq!(bd.reply_iccs.as_deref(), Some("f0f8"));
+        // 竖版底部主行: 主线=第N步·着法, 分支演示=改走X
+        assert_eq!(scenes[1].current_move.as_deref(), Some("第2步 · 将4平5"));
+        assert_eq!(demo.current_move.as_deref(), Some("改走 将4退1"));
+        assert_eq!(scenes[0].current_move, None);
+        assert_eq!(scenes[3].current_move, None);
+        // 字幕分段: 分支演示词约 39 字, 上限 24 应切成 2 段; 完整词保留给 TTS
+        assert_eq!(demo.subtitles.len(), 2);
+        assert!(demo.subtitles.iter().all(|c| c.chars().count() <= 24));
+        assert_eq!(scenes[1].subtitles.len(), 1);
+        // 音效标注: 主线 1 个落子点(占比 0.35); 分支演示 3 个(备选落子 + 反制落子 + 反制将军提示)
+        assert_eq!(scenes[1].sfx.len(), 1);
+        assert!((scenes[1].sfx[0].0 - 0.35).abs() < 1e-6);
+        assert_eq!(scenes[1].sfx[0].1, Sfx::Click);
+        assert_eq!(demo.sfx.len(), 3);
+        assert!((demo.sfx[0].0 - 0.35).abs() < 1e-6);
+        assert_eq!(demo.sfx[0].1, Sfx::Click);
+        assert!((demo.sfx[1].0 - 0.7).abs() < 1e-6);
+        assert_eq!(demo.sfx[1].1, Sfx::Click);
+        assert!((demo.sfx[2].0 - 0.7).abs() < 1e-6);
+        assert_eq!(demo.sfx[2].1, Sfx::Check);
+        assert!(scenes[0].sfx.is_empty());
+        assert!(scenes[3].sfx.is_empty());
         assert!((demo.anim_ratio - 0.7).abs() < 1e-6, "有反制时动画应占 0.7");
         assert!(demo.subtitle.contains("假如黑方不走"));
         assert!(demo.score_line.contains("假如黑方不走将4平5"));
@@ -557,17 +705,66 @@ mod branch_demo_tests {
         assert_eq!(after, expected);
     }
 
+    // 发布文案与走子清单的内容构造
+    #[test]
+    fn test_publish_and_moves_text() {
+        let (script, _) = demo_script();
+        let publish = build_publish_text(&script);
+        for section in ["[标题]", "[话题]", "[简介]", "[置顶评论]"] {
+            assert!(publish.contains(section), "缺少 {section}: {publish}");
+        }
+        assert!(publish.contains("#象棋"), "应含话题标签");
+        assert!(publish.contains("答案揭晓"), "应含置顶评论");
+
+        let moves = build_moves_text(&script);
+        assert!(moves.starts_with("红方先行 · 共 1 步"));
+        assert!(moves.contains("2. 黑方 将4平5   (评分 -300 较差)"));
+        // 非绝杀局无终局行
+        assert!(!moves.contains("终局"));
+    }
+
     // 视觉验证: 渲染演示场景关键帧到 scripts/out/branch_demo/ (人工查看)
     #[test]
     #[ignore]
     fn test_dump_branch_demo_frames() {
         let (script, board) = demo_script();
-        let (scenes, _) = build_frame_scenes(&script, &board);
-        let renderer = Renderer::new().unwrap();
+        let (scenes, _) = build_frame_scenes(&script, &board, 24);
+        let renderer = Renderer::new(Aspect::Landscape).unwrap();
         let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../scripts/out/branch_demo");
         std::fs::create_dir_all(&dir).unwrap();
         for (name, t) in [("1_x_anim", 0.15), ("2_x_done", 0.45), ("3_reply_anim", 0.65), ("4_reply_done", 0.9), ("5_settled", 1.0)] {
             let frame = renderer.render_frame(&scenes[2], t);
+            let path = dir.join(format!("{name}.png"));
+            frame.save(&path).unwrap();
+            println!("saved {}", path.display());
+        }
+    }
+
+    // 视觉验证: 竖版 1080x1920 四类场景关键帧落盘 scripts/out/portrait/ (人工查看)
+    #[test]
+    #[ignore]
+    fn test_dump_portrait_frames() {
+        let (mut script, board) = demo_script();
+        // 模拟真实开场词长度, 验证字幕分段轮播
+        script.intro_comment = "欢迎来到残局推演。看当前局面, 红方有车和炮, 黑方仅剩孤将。红方先行, 红方优势明显。这盘棋为什么能赢? 我们一步一步推演。".into();
+        let (scenes, _) = build_frame_scenes(&script, &board, 24);
+        assert!(scenes[0].subtitles.len() >= 2, "长开场词应切为多段");
+        let renderer = Renderer::new(Aspect::Portrait).unwrap();
+        assert_eq!((renderer.layout.canvas_w, renderer.layout.canvas_h), (1080, 1920));
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../scripts/out/portrait");
+        std::fs::create_dir_all(&dir).unwrap();
+        // 开场两段字幕 / 走子动画中 / 走子落定 / 分支演示落定 / 结尾
+        let dumps = [
+            ("1_intro", &scenes[0], 0.1),
+            ("1b_intro_late", &scenes[0], 0.85),
+            ("2_move_anim", &scenes[1], 0.3),
+            ("3_move_done", &scenes[1], 1.0),
+            ("4_branch_demo", &scenes[2], 1.0),
+            ("5_outro", &scenes[3], 1.0),
+        ];
+        for (name, scene, t) in dumps {
+            let frame = renderer.render_frame(scene, t);
+            assert_eq!((frame.width(), frame.height()), (1080, 1920));
             let path = dir.join(format!("{name}.png"));
             frame.save(&path).unwrap();
             println!("saved {}", path.display());

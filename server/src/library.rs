@@ -18,11 +18,18 @@ pub struct VideoMeta {
     pub video_path: String,
     pub thumb_path: String,
     #[serde(default)] // 旧版 meta.json 无此字段
+    pub cover_path: String, // 竖版封面卡(发布用)
+    #[serde(default)] // 旧版 meta.json 无此字段
     pub polished: bool, // 解说词经过 AI 润色
 }
 
 pub fn videos_dir(base: &Path) -> PathBuf {
     base.join("videos")
+}
+
+// 背景音乐目录(用户自备 mp3 等音频, 每次生成随机选用)
+pub fn music_dir(base: &Path) -> PathBuf {
+    base.join("music")
 }
 
 pub fn list(base: &Path) -> Vec<VideoMeta> {
@@ -45,6 +52,15 @@ pub fn get(base: &Path, id: &str) -> Result<serde_json::Value, String> {
     let path = videos_dir(base).join(id).join("script.json");
     let bytes = fs::read(&path).map_err(|e| format!("剧本文件读取失败: {e}"))?;
     serde_json::from_slice(&bytes).map_err(|e| format!("剧本解析失败: {e}"))
+}
+
+// 读取发布文案(供前端一键复制)
+pub fn get_publish_text(base: &Path, id: &str) -> Result<String, String> {
+    if id.contains('/') || id.contains('\\') || id.contains("..") {
+        return Err("非法的视频 id".to_string());
+    }
+    let path = videos_dir(base).join(id).join("publish.txt");
+    fs::read_to_string(&path).map_err(|e| format!("发布文案读取失败: {e}"))
 }
 
 pub fn delete(base: &Path, id: &str) -> Result<(), String> {
@@ -100,6 +116,7 @@ mod tests {
             move_count: 1,
             video_path: "a".into(),
             thumb_path: "b".into(),
+            cover_path: "c".into(),
             polished: true,
         };
         let json = serde_json::to_string(&meta).unwrap();

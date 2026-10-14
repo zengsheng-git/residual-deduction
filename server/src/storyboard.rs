@@ -83,11 +83,13 @@ fn verdict_text(score: isize, camp: &Camp) -> String {
     }
 }
 
+// 标题(钩子式, 不剧透步数与结论): 用于画面顶部、视频库与发布文案
 fn title_text(score: isize, camp: &Camp) -> String {
-    if let Some(n) = narrator::mate_moves(score) {
-        format!("残局挑战: {}方{}步绝杀", narrator::camp_name(camp), n)
+    let name = narrator::camp_name(camp);
+    if narrator::mate_moves(score).is_some() {
+        format!("{name}先!这个残局暗藏杀机, 你能几步赢?")
     } else {
-        format!("残局推演: {}方主动进攻", narrator::camp_name(camp))
+        format!("{name}先!这个残局怎么赢? 一起来推演")
     }
 }
 
@@ -264,12 +266,12 @@ pub fn build(
     let title = title_text(root.score, &start_camp);
     let red_material = narrator::material_list(&start_board, &Camp::Red);
     let black_material = narrator::material_list(&start_board, &Camp::Black);
-    let intro_comment = narrator::intro_comment(&start_camp, &red_material, &black_material, &verdict);
+    let intro_comment = narrator::intro_comment(&start_camp, &red_material, &black_material);
     let intro_info = vec![
         format!("红方阵容: {}", red_material),
         format!("黑方阵容: {}", black_material),
         format!("先行方: {}方", narrator::camp_name(&start_camp)),
-        format!("局面判断: {}", verdict),
+        "任务: 找到必胜之路".to_string(),
     ];
 
     // 总结: 挑选关键着法(绝杀/吃车马炮/分支节点/将军)

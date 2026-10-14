@@ -151,7 +151,8 @@ pub fn branch_demo_comment(defender: &Camp, main_chinese: &str, alt_chinese: &st
     }
 }
 
-pub fn intro_comment(camp: &Camp, red_material: &str, black_material: &str, verdict: &str) -> String {
+// 开场词(悬念钩子): 交代阵容与任务, 不剧透结论——结论留给结尾揭晓
+pub fn intro_comment(camp: &Camp, red_material: &str, black_material: &str) -> String {
     let describe = |m: &str| {
         if m == "仅剩孤将" {
             m.to_string()
@@ -160,20 +161,23 @@ pub fn intro_comment(camp: &Camp, red_material: &str, black_material: &str, verd
         }
     };
     format!(
-        "欢迎来到残局推演。看当前局面, 红方{}, 黑方{}。{}方先行, {}。这盘棋为什么能赢? 我们一步一步推演。",
+        "这盘残局, 红方{}, 黑方{}。{}方先行, 局面看似平平无奇, 其实暗藏杀机——必胜的路线就藏在里面, 你能看出来吗? 我们一步一步推演。",
         describe(red_material),
         describe(black_material),
-        camp_name(camp),
-        verdict
+        camp_name(camp)
     )
 }
 
+// 结尾词: 回顾关键着法, 揭晓结论, 引导互动与关注
 pub fn outro_comment(verdict: &str, key_moves: &[String]) -> String {
     let mut parts = Vec::new();
     if !key_moves.is_empty() {
         parts.push(format!("回顾整盘棋, 关键几手是{}", key_moves.join("、")));
     }
-    parts.push(format!("残局取胜的思路, 就是利用先手不断压迫, 直到形成绝杀。最终{}。感谢观看, 我们下期再见", verdict));
+    parts.push(format!("最终{}", verdict));
+    parts.push("制胜的思路, 就是握紧先手, 一步一步把优势走成胜势".to_string());
+    parts.push("你觉得哪一步最关键? 评论区聊聊".to_string());
+    parts.push("点个关注, 下期残局更精彩".to_string());
     parts.join("。")
 }
 
@@ -220,5 +224,28 @@ mod tests {
             branch_demo_comment(&black, "将4平5", "车4退2", None, "与主招几乎等效"),
             "假如黑方不走将4平5, 改走车4退2, 效果与正着相当, 红方的进攻路线不变。"
         );
+    }
+
+    // 开场钩子: 交代阵容与先行方, 不出现结论
+    #[test]
+    fn test_intro_comment_no_spoiler() {
+        let board = fen_to_board("3k5/9/9/9/9/9/9/4C4/9/4K3R w");
+        let red = material_list(&board, &Camp::Red);
+        let black = material_list(&board, &Camp::Black);
+        let intro = intro_comment(&Camp::Red, &red, &black);
+        assert!(intro.starts_with("这盘残局"));
+        assert!(intro.contains("红方先行"));
+        assert!(intro.contains("你能看出来吗"));
+        assert!(!intro.contains("绝杀") && !intro.contains("胜势") && !intro.contains("优势"), "开场不应剧透结论: {intro}");
+    }
+
+    // 结尾: 结论揭晓 + 互动引导
+    #[test]
+    fn test_outro_comment_reveal_and_cta() {
+        let out = outro_comment("红方3步绝杀", &["第3步 车四进五".to_string()]);
+        assert!(out.contains("最终红方3步绝杀"));
+        assert!(out.contains("关键几手是第3步 车四进五"));
+        assert!(out.contains("评论区聊聊"));
+        assert!(out.contains("点个关注"));
     }
 }

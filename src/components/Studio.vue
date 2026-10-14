@@ -13,6 +13,7 @@ import {
     listenProgress,
     recognizeImage,
     stopGeneration,
+    ASPECTS,
     VOICES,
 } from "../api";
 import { studioStore as store, resetGenerationState } from "../store";
@@ -26,6 +27,9 @@ const branchMax = ref(4);
 const rate = ref(0);
 const voiceEnabled = ref(true);
 const branchesEnabled = ref(true);
+const sfxEnabled = ref(true);
+const bgmEnabled = ref(true);
+const aspect = ref("portrait");
 
 const stages: Record<string, string> = {
     analyse: "引擎推演",
@@ -49,6 +53,9 @@ onMounted(async () => {
         rate.value = s.rate;
         voiceEnabled.value = s.voice_enabled;
         branchesEnabled.value = s.branches_enabled;
+        sfxEnabled.value = s.sfx_enabled;
+        bgmEnabled.value = s.bgm_enabled;
+        aspect.value = s.aspect || "portrait";
     } catch {
         // 设置读取失败时使用内置默认值
     }
@@ -122,6 +129,10 @@ async function handleGenerate() {
             rate: rate.value,
             voice_enabled: voiceEnabled.value,
             branches_enabled: branchesEnabled.value,
+            sfx_enabled: sfxEnabled.value,
+            bgm_enabled: bgmEnabled.value,
+            bgm_volume: 0, // 0 = 用设置页音量
+            aspect: aspect.value,
         });
     } catch (e) {
         store.busy = false;
@@ -199,7 +210,21 @@ function fmtDuration(secs: number): string {
                         <n-switch v-model:value="branchesEnabled" size="small" />
                         <span>分支推演</span>
                       </div>
+                      <div class="switch-item">
+                        <n-switch v-model:value="sfxEnabled" size="small" />
+                        <span>走子音效</span>
+                      </div>
+                      <div class="switch-item">
+                        <n-switch v-model:value="bgmEnabled" size="small" />
+                        <span>背景音乐</span>
+                      </div>
                     </div>
+                  </div>
+                  <div class="side-pick">
+                    <div class="side-label">画幅</div>
+                    <n-radio-group v-model:value="aspect">
+                      <n-radio-button v-for="a in ASPECTS" :key="a.value" :value="a.value">{{ a.label }}</n-radio-button>
+                    </n-radio-group>
                   </div>
                 </n-space>
               </div>

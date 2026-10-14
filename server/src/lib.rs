@@ -12,6 +12,7 @@ mod narrator;
 mod polish;
 mod recognize;
 mod render;
+mod sfx;
 mod storyboard;
 mod tts;
 mod video;
@@ -98,8 +99,10 @@ pub fn run() {
             stop_generation,
             list_videos,
             get_video_script,
+            get_publish_text,
             delete_video,
             open_videos_folder,
+            open_music_folder,
             get_settings,
             save_settings,
             test_polish_connection,
@@ -144,6 +147,8 @@ fn generate_video(app: AppHandle, params: GenParams) -> Result<(), String> {
             depth: if params.depth == 0 { settings.depth } else { params.depth },
             movetime: if params.movetime == 0 { settings.movetime } else { params.movetime },
             branch_max: if params.branch_max == 0 { settings.branch_max } else { params.branch_max },
+            aspect: if params.aspect.is_empty() { settings.aspect.clone() } else { params.aspect.clone() },
+            bgm_volume: if params.bgm_volume == 0 { settings.bgm_volume } else { params.bgm_volume },
             ..params
         }
     };
@@ -195,6 +200,11 @@ fn get_video_script(id: String) -> Result<serde_json::Value, String> {
 }
 
 #[tauri::command]
+fn get_publish_text(id: String) -> Result<String, String> {
+    library::get_publish_text(&state().base_dir, &id)
+}
+
+#[tauri::command]
 fn delete_video(id: String) -> Result<(), String> {
     library::delete(&state().base_dir, &id)
 }
@@ -202,6 +212,13 @@ fn delete_video(id: String) -> Result<(), String> {
 #[tauri::command]
 fn open_videos_folder() -> Result<(), String> {
     let dir = library::videos_dir(&state().base_dir);
+    let _ = std::fs::create_dir_all(&dir);
+    tauri_plugin_opener::open_path(&dir, None::<&str>).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn open_music_folder() -> Result<(), String> {
+    let dir = library::music_dir(&state().base_dir);
     let _ = std::fs::create_dir_all(&dir);
     tauri_plugin_opener::open_path(&dir, None::<&str>).map_err(|e| e.to_string())
 }

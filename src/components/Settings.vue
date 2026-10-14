@@ -3,7 +3,7 @@ import { useMessage } from "naive-ui";
 import { NButton, NCard, NForm, NFormItem, NInput, NInputNumber, NSelect, NSlider, NSwitch } from "naive-ui";
 import { onMounted, ref } from "vue";
 
-import { getSettings, saveSettings, testPolishConnection, VOICES, type AppSettings } from "../api";
+import { getSettings, saveSettings, testPolishConnection, openMusicFolder, ASPECTS, VOICES, type AppSettings } from "../api";
 const message = useMessage();
 const settings = ref<AppSettings | null>(null);
 const testing = ref(false);
@@ -54,6 +54,30 @@ async function testPolish() {
         </n-form-item>
         <n-form-item label="分支分析节点">
           <n-input-number v-model:value="settings.branch_max" :min="0" :max="6" :disabled="!settings.branches_enabled" />
+        </n-form-item>
+        <n-form-item label="默认画幅">
+          <n-select v-model:value="settings.aspect" :options="ASPECTS" />
+        </n-form-item>
+        <n-form-item label="走子音效">
+          <n-switch v-model:value="settings.sfx_enabled">
+            <template #checked>走子/吃子/将军/绝杀音效</template>
+            <template #unchecked>关闭音效</template>
+          </n-switch>
+        </n-form-item>
+        <n-form-item label="背景音乐">
+          <n-switch v-model:value="settings.bgm_enabled">
+            <template #checked>混入 music 目录音乐</template>
+            <template #unchecked>不混入背景音乐</template>
+          </n-switch>
+        </n-form-item>
+        <n-form-item label="BGM 音量">
+          <n-slider v-model:value="settings.bgm_volume" :min="5" :max="100" :step="5" :disabled="!settings.bgm_enabled" :format-tooltip="(v: number) => `${v}%`" />
+        </n-form-item>
+        <n-form-item label="音乐文件">
+          <n-space vertical>
+            <n-button size="small" @click="openMusicFolder">打开 music 文件夹</n-button>
+            <span class="field-hint">把 mp3/wav/m4a/flac 放入 music 文件夹即可, 每次生成随机选用一首; 文件夹为空时自动跳过。</span>
+          </n-space>
         </n-form-item>
         <n-form-item label="语音解说">
           <n-switch v-model:value="settings.voice_enabled">
@@ -111,3 +135,11 @@ async function testPolish() {
     </n-card>
   </div>
 </template>
+
+<style scoped>
+.field-hint {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.45);
+  line-height: 1.6;
+}
+</style>

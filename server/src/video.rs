@@ -6,8 +6,6 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::process::Stdio;
 
-use crate::render::CANVAS_H;
-use crate::render::CANVAS_W;
 use crate::render::FPS;
 
 #[cfg(target_os = "windows")]
@@ -85,11 +83,12 @@ pub fn wav_duration(wav: &Path) -> Result<f64, String> {
     }
 }
 
-// 编码一个片段: 帧由 frames 回调逐帧产出(rgb24), 音频来自 wav
+// 编码一个片段: 帧由 frames 回调逐帧产出(rgb24), 音频来自 wav, size 为画布 (宽, 高)
 pub fn encode_segment(
     ffmpeg: &Path,
     audio_wav: &Path,
     out_mp4: &Path,
+    size: (u32, u32),
     frames: &mut dyn Iterator<Item = Vec<u8>>,
 ) -> Result<(), String> {
     let mut child = spawn(
@@ -101,7 +100,7 @@ pub fn encode_segment(
             "-pix_fmt".into(),
             "rgb24".into(),
             "-s".into(),
-            format!("{CANVAS_W}x{CANVAS_H}"),
+            format!("{}x{}", size.0, size.1),
             "-r".into(),
             format!("{FPS}"),
             "-i".into(),
@@ -171,6 +170,40 @@ pub fn concat_segments(ffmpeg: &Path, segments: &[PathBuf], out_mp4: &Path, work
             out_mp4.to_string_lossy().into_owned(),
         ],
     )
+}
+
+// 混入背景音乐: 人声保持, BGM 以指定音量(0~100)循环, 视频流不重编码
+// 注意 normalize=0: amix 默认归一化会把人声对半压低
+pub fn mix_bgm(ffmpeg: &Path, video: &Path, music: &Path, volume_pct: u32) -> Result<(), String> {
+    let vol = (volume_pct.min(100) as f32 / 100.0).clamp(0.01, 1.0);
+    let tmp = video.with_extension("bgm.mp4");
+    run(
+        ffmpeg,
+        &[
+            "-y".into(),
+            "-i".into(),
+            video.to_string_lossy().into_owned(),
+            "-stream_loop".into(),
+            "-1".into(),
+            "-i".into(),
+            music.to_string_lossy().into_owned(),
+            "-filter_complex".into(),
+            format!("[1:a]volume={vol:.2}[b];[0:a][b]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[aout]"),
+            "-map".into(),
+            "0:v".into(),
+            "-map".into(),
+            "[aout]".into(),
+            "-c:v".into(),
+            "copy".into(),
+            "-c:a".into(),
+            "aac".into(),
+            "-b:a".into(),
+            "128k".into(),
+            tmp.to_string_lossy().into_owned(),
+        ],
+    )?;
+    std::fs::remove_file(video).ok();
+    std::fs::rename(&tmp, video).map_err(|e| format!("BGM 替换成片失败: {e}"))
 }
 
 // 提取封面
