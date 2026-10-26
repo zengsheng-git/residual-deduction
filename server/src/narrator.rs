@@ -151,21 +151,10 @@ pub fn branch_demo_comment(defender: &Camp, main_chinese: &str, alt_chinese: &st
     }
 }
 
-// 开场词(悬念钩子): 交代阵容与任务, 不剧透结论——结论留给结尾揭晓
-pub fn intro_comment(camp: &Camp, red_material: &str, black_material: &str) -> String {
-    let describe = |m: &str| {
-        if m == "仅剩孤将" {
-            m.to_string()
-        } else {
-            format!("有{}", m)
-        }
-    };
-    format!(
-        "这盘残局, 红方{}, 黑方{}。{}方先行, 局面看似平平无奇, 其实暗藏杀机——必胜的路线就藏在里面, 你能看出来吗? 我们一步一步推演。",
-        describe(red_material),
-        describe(black_material),
-        camp_name(camp)
-    )
+// 开场词(悬念钩子): 一句话点题, 不剧透结论——结论留给结尾揭晓
+// 阵容/先行方等事实由画面信息栏展示, 口播不复读, 全句控制在 5 秒内
+pub fn intro_comment(camp: &Camp) -> String {
+    format!("{}方先行, 杀招就藏在里面, 你能看出来吗?", camp_name(camp))
 }
 
 // 结尾词: 回顾关键着法, 揭晓结论, 引导互动与关注
@@ -226,17 +215,18 @@ mod tests {
         );
     }
 
-    // 开场钩子: 交代阵容与先行方, 不出现结论
+    // 开场钩子: 一句话、不剧透结论、不念阵容(画面信息栏已展示)
     #[test]
-    fn test_intro_comment_no_spoiler() {
-        let board = fen_to_board("3k5/9/9/9/9/9/9/4C4/9/4K3R w");
-        let red = material_list(&board, &Camp::Red);
-        let black = material_list(&board, &Camp::Black);
-        let intro = intro_comment(&Camp::Red, &red, &black);
-        assert!(intro.starts_with("这盘残局"));
-        assert!(intro.contains("红方先行"));
-        assert!(intro.contains("你能看出来吗"));
-        assert!(!intro.contains("绝杀") && !intro.contains("胜势") && !intro.contains("优势"), "开场不应剧透结论: {intro}");
+    fn test_intro_comment_short_and_no_spoiler() {
+        assert_eq!(intro_comment(&Camp::Red), "红方先行, 杀招就藏在里面, 你能看出来吗?");
+        assert_eq!(intro_comment(&Camp::Black), "黑方先行, 杀招就藏在里面, 你能看出来吗?");
+        for intro in [intro_comment(&Camp::Red), intro_comment(&Camp::Black)] {
+            assert!(intro.chars().count() <= 24, "开场口播必须短: {intro}");
+            assert!(
+                !intro.contains("绝杀") && !intro.contains("胜势") && !intro.contains("优势"),
+                "开场不应剧透结论: {intro}"
+            );
+        }
     }
 
     // 结尾: 结论揭晓 + 互动引导

@@ -266,7 +266,7 @@ pub fn build(
     let title = title_text(root.score, &start_camp);
     let red_material = narrator::material_list(&start_board, &Camp::Red);
     let black_material = narrator::material_list(&start_board, &Camp::Black);
-    let intro_comment = narrator::intro_comment(&start_camp, &red_material, &black_material);
+    let intro_comment = narrator::intro_comment(&start_camp);
     let intro_info = vec![
         format!("红方阵容: {}", red_material),
         format!("黑方阵容: {}", black_material),
