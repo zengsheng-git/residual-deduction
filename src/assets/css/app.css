@@ -128,6 +128,12 @@ body {
     margin-top: 6px;
 }
 
+.paste-tip {
+    font-size: 12px;
+    color: #6fa8dc;
+    margin-top: 6px;
+}
+
 .preview-row {
     display: flex;
     gap: 18px;

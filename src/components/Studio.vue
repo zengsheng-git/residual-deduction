@@ -43,6 +43,8 @@ const stages: Record<string, string> = {
 let unlisteners: (() => void)[] = [];
 
 onMounted(async () => {
+    // 全局监听 Ctrl+V, 截图后可直接粘贴识别
+    window.addEventListener("paste", handlePaste);
     // 参数默认值取自设置页
     try {
         const s = await getSettings();
@@ -85,14 +87,17 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
+    window.removeEventListener("paste", handlePaste);
     unlisteners.forEach((fn) => fn());
     unlisteners = [];
 });
 
-async function handleUpload({ file }: { file: UploadFileInfo }) {
-    // 只处理新加入的文件(清空列表引发的 removed 事件不处理)
-    if (!file.file || file.status !== "pending") return;
-    const buf = new Uint8Array(await file.file.arrayBuffer());
+// 识别进行中标记, 防止连按 Ctrl+V 触发重复识别
+let recognizing = false;
+
+async function recognizeBuffer(buf: Uint8Array) {
+    if (recognizing) return;
+    recognizing = true;
     try {
         const rec = await recognizeImage(buf);
         store.recognition = rec;
@@ -106,8 +111,32 @@ async function handleUpload({ file }: { file: UploadFileInfo }) {
         store.recognition = null;
         message.error(String(e));
     } finally {
-        // 清空内部列表, 保证随时可以重新上传替换
-        uploadList.value = [];
+        recognizing = false;
+    }
+}
+
+async function handleUpload({ file }: { file: UploadFileInfo }) {
+    // 只处理新加入的文件(清空列表引发的 removed 事件不处理)
+    if (!file.file || file.status !== "pending") return;
+    const buf = new Uint8Array(await file.file.arrayBuffer());
+    await recognizeBuffer(buf);
+    // 清空内部列表, 保证随时可以重新上传替换
+    uploadList.value = [];
+}
+
+// 截图后直接 Ctrl+V 粘贴(微信/QQ/Win+Shift+S 截图, 或复制的图片文件), 无需先保存图片
+async function handlePaste(e: ClipboardEvent) {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (const item of Array.from(items)) {
+        if (item.kind === "file" && item.type.startsWith("image/")) {
+            const f = item.getAsFile();
+            if (!f) continue;
+            e.preventDefault();
+            const buf = new Uint8Array(await f.arrayBuffer());
+            await recognizeBuffer(buf);
+            return;
+        }
     }
 }
 
@@ -172,7 +201,8 @@ function fmtDuration(secs: number): string {
             <n-upload-dragger>
               <div class="upload-hint">
                 <div class="upload-icon">♟</div>
-                <div>点击或拖入截图 (对局平台 / 棋谱网站 / App 残局页)</div>
+                <div>点击 / 拖入文件 / Ctrl+V 粘贴截图</div>
+                <div class="paste-tip">用微信、QQ 或 Win+Shift+S 截图后, 直接回本窗口按 Ctrl+V, 无需先保存图片</div>
                 <div class="upload-sub">{{ store.recognition ? "已识别 — 传错了? 重新上传将自动替换" : "系统将自动识别棋盘与棋子" }}</div>
               </div>
             </n-upload-dragger>
